@@ -1,9 +1,45 @@
+from typing import Union
+from decimal import Decimal
+from datetime import datetime, timezone
+from math import log10
+
+
+class TimeStamp:
+    @staticmethod
+    def get_dt_from_timestamp(timestamp):
+        if timestamp <= 0:
+            return datetime.now(tz=None)
+        if int(log10(timestamp) + 1) > 10:
+            timestamp /= 1000.0
+        return datetime.utcfromtimestamp(timestamp)
+
+    @staticmethod
+    def convert_utc_to_local_dt(utc_dt):
+        return utc_dt.replace(tzinfo=timezone.utc).astimezone(tz=None)
+
+    @staticmethod
+    def get_local_dt_from_timestamp(timestamp):
+        return TimeStamp.convert_utc_to_local_dt(TimeStamp.get_dt_from_timestamp(timestamp))
+
+    @staticmethod
+    def get_local_dt_from_now():
+        return datetime.now(tz=None)
+
+    @staticmethod
+    def format_time(dt):
+        return dt.strftime('%Y-%m-%d %H:%M:%S')
+
+    @staticmethod
+    def format_date(dt):
+        return dt.strftime('%Y-%m-%d')
+
+
 quote_coins = frozenset({
     'USDT', 'USD', 'USDC', 'PERP', 'USDE', 'EUR', 'BRL', 'BTC', 'ETH', 'DAI', 'BRZ', 'FDUSD'
 })
 
 
-def get_symbol(contract):
+def get_symbol(contract: str):
     global quote_coins
     market_type = 'spot'
     symbol = ''.join(x for x in contract.upper() if x.isalnum() or x in '/-:').split('/')
@@ -27,11 +63,11 @@ def get_symbol(contract):
     return [base_coin, quote_base_coin, market_type]
 
 
-def get_market_type(contract):
+def get_market_type(contract: str):
     return get_symbol(contract)[-1]
 
 
-def get_trading_view_url(contract):
+def get_trading_view_url(contract: str):
     try:
         base_coin, quote_coin, market_type = get_symbol(contract)
     except:
@@ -43,7 +79,7 @@ def get_trading_view_url(contract):
     return ''
 
 
-def get_exchange_trade_url(contract):
+def get_exchange_trade_url(contract: str):
     global quote_coins
     try:
         base_coin, quote_coin, market_type = get_symbol(contract)
@@ -64,7 +100,7 @@ def get_exchange_trade_url(contract):
     return ''
 
 
-def strip_tags(string):
+def strip_tags(string: str):
     in_tag = False
     result = ''
     prev = ''
@@ -77,3 +113,39 @@ def strip_tags(string):
             result += x
         prev = x
     return result
+
+
+def format_si_number(number: Union[int, float, Decimal], *,
+                     multiple_min: Union[int, float, Decimal, None, ...] = ...,
+                     submultiple_max: Union[int, float, Decimal, None, ...] = ...,
+                     allowed: Union[set, None] = None,
+                     ignored: Union[set, None] = None):
+    values = [
+        (10 ** 30, 'Q'), (10 ** 27, 'R'), (10 ** 24, 'Y'),
+        (10 ** 21, 'Z'), (10 ** 18, 'E'), (10 ** 15, 'P'),
+        (10 ** 12, 'T'), (10 ** 9, 'G'), (10 ** 6, 'M'),
+        (10 ** 3, 'k'), (10 ** 2, 'h'), (10 ** 1, 'da'),
+        (10 ** (-30), 'q'), (10 ** (-27), 'r'), (10 ** (-24), 'y'),
+        (10 ** (-21), 'z'), (10 ** (-18), 'a'), (10 ** (-15), 'f'),
+        (10 ** (-12), 'p'), (10 ** (-9), 'n'), (10 ** (-6), 'μ'),
+        (10 ** (-3), 'm'), (10 ** (-2), 'c'), (10 ** (-1), 'd'),
+    ]
+    if multiple_min is ...:
+        multiple_min = 1
+    elif multiple_min is None:
+        multiple_min = max(values, key=lambda x: x[0])[0] * 10
+    if submultiple_max is ...:
+        submultiple_max = 1
+    elif submultiple_max is None:
+        submultiple_max = min(values, key=lambda x: x[0])[0] / 10
+    if allowed is None:
+        allowed = {v for k, v in values}
+    if ignored is None:
+        ignored = set()
+    for value, symbol in values:
+        if symbol not in allowed or symbol in ignored:
+            continue
+        if 1 <= multiple_min <= value <= abs(number) or 1 >= submultiple_max >= value >= abs(number):
+            number /= value
+            return number, symbol
+    return number, ''

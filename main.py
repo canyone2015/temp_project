@@ -38,7 +38,7 @@ def main(host, port):
 
 
 if __name__ in {"__main__", "__mp_main__"}:
-    parser = argparse.ArgumentParser(prog='./platform', description=DESCRIPTION)
+    parser = argparse.ArgumentParser(prog='./main', description=DESCRIPTION)
     parser.add_argument('--host', default=None, help='hostname')
     parser.add_argument('--port', default=None, help='port')
     args = parser.parse_args()

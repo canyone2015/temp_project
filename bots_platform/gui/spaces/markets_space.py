@@ -7,11 +7,7 @@ from bots_platform.model.utils import get_exchange_trade_url, get_trading_view_u
 
 
 class MarketsSpace:
-    FEAR_GREED_INDEX_LABEL = 'FEAR_GREED_INDEX_LABEL'
-    MARKET_CAP_LABEL = 'MARKET_CAP_LABEL'
-    VOLUME_LABEL = 'VOLUME_LABEL'
-    DOMINANCE_LABEL = 'DOMINANCE_LABEL'
-    ALT_COIN_INDEX_LABEL = 'ALT_COIN_INDEX_LABEL'
+    STATISTICS_TABLE = 'STATISTICS_TABLE'
     FILTER_UPDATE_ROW = 'FILTER_UPDATE_ROW'
     UPDATE_BUTTON = 'UPDATE_BUTTON'
     FILTER_INPUT = 'FILTER_INPUT'
@@ -49,77 +45,43 @@ class MarketsSpace:
                                           on_click=lambda *_: update_markets_callback()).classes('m-auto')
                 self._elements[MarketsSpace.UPDATE_BUTTON] = update_button
 
-            fear_greed_index_fstring = ''
-            fear_greed_index_url = ''
-            market_cap_fstring = ''
-            market_cap_url = ''
-            volume_fstring = ''
-            volume_url = ''
-            dominance_fstring = ''
-            dominance_url = ''
-            alt_coin_index_fstring = ''
-            alt_coin_index_url = ''
+            stat_metrics = [
+                ('DateTime', 'datetime_fstring'),
+                ('Cryptocurrencies', 'cryptocurrencies_fstring'),
+                ('Markets', 'markets_fstring'),
+                ('Active Exchanges', 'active_exchanges_fstring'),
+                ('Market Cap (Total; De-Fi)', 'market_cap_fstring'),
+                ('Volume 24h (Spot; Stablecoin; De-Fi; Derivatives)', 'volume_24h_fstring'),
+                ('Dominance (BTC; ETH)', 'dominance_fstring'),
+                ('Fear and Greed Index', 'fear_greed_index_fstring'),
+                ('Altcoin Index (Season, Month, Year)', 'alt_coin_index_fstring'),
+                ('Top Cryptos', 'top_cryptos_fstring'),
+            ]
+            stat_metrics_rows = []
             try:
                 data: dict = await self._exchange_model.fetch_market_statistics()
-                datetime_fstring = data['datetime_fstring']
-                fear_greed_index_fstring = data['fear_greed_index_fstring']
-                fear_greed_index_fstring = f"{datetime_fstring} – {fear_greed_index_fstring}"
-                fear_greed_index_url = data['fear_greed_index_url']
-                market_cap_fstring = data['market_cap_fstring']
-                market_cap_url = data['market_cap_url']
-                volume_fstring = data['24h_volume_fstring']
-                volume_url = data['24h_volume_url']
-                dominance_fstring = data['dominance_fstring']
-                dominance_url = data['dominance_url']
-                alt_coin_index_fstring = data['alt_coin_index_fstring']
-                alt_coin_index_url = data['alt_coin_index_url']
+                for metric_name, metric_key in stat_metrics:
+                    metric_value = data[metric_key]
+                    stat_metrics_rows.append({
+                        'metric': metric_name,
+                        'value': metric_value,
+                    })
             except:
                 pass
 
-            if MarketsSpace.FEAR_GREED_INDEX_LABEL not in self._elements:
-                fear_greed_index_label = ui.link(fear_greed_index_fstring,
-                                                 fear_greed_index_url,
-                                                 new_tab=True)
-                self._elements[MarketsSpace.FEAR_GREED_INDEX_LABEL] = fear_greed_index_label
+            if MarketsSpace.STATISTICS_TABLE not in self._elements:
+                ui.separator()
+                ui.label('Global market')
+                table = ui.table(columns=Columns.MARKETS_STATISTICS_COLUMNS, rows=stat_metrics_rows, row_key='metric'
+                                 ).style("width: 800px;").props('table-header-class=hidden')
+                self._elements[MarketsSpace.STATISTICS_TABLE] = table
             else:
-                self._elements[MarketsSpace.FEAR_GREED_INDEX_LABEL].set_text(fear_greed_index_fstring)
-
-            if MarketsSpace.MARKET_CAP_LABEL not in self._elements:
-                market_cap_label = ui.link(market_cap_fstring,
-                                           market_cap_url,
-                                           new_tab=True)
-                self._elements[MarketsSpace.MARKET_CAP_LABEL] = market_cap_label
-            else:
-                self._elements[MarketsSpace.MARKET_CAP_LABEL].set_text(market_cap_fstring)
-
-            if MarketsSpace.VOLUME_LABEL not in self._elements:
-                volume_label = ui.link(volume_fstring,
-                                       volume_url,
-                                       new_tab=True)
-                self._elements[MarketsSpace.VOLUME_LABEL] = volume_label
-            else:
-                self._elements[MarketsSpace.VOLUME_LABEL].set_text(volume_fstring)
-
-            if MarketsSpace.DOMINANCE_LABEL not in self._elements:
-                dominance_label = ui.link(dominance_fstring,
-                                          dominance_url,
-                                          new_tab=True)
-                self._elements[MarketsSpace.DOMINANCE_LABEL] = dominance_label
-            else:
-                self._elements[MarketsSpace.DOMINANCE_LABEL].set_text(dominance_fstring)
-
-            if MarketsSpace.ALT_COIN_INDEX_LABEL not in self._elements:
-                alt_coin_index_label = ui.link(alt_coin_index_fstring,
-                                               alt_coin_index_url,
-                                               new_tab=True)
-                self._elements[MarketsSpace.ALT_COIN_INDEX_LABEL] = alt_coin_index_label
-                alt_coin_index_label.tooltip("""
-                If 75% of the Top 50 coins performed better than Bitcoin over the last season (90 days) / last month (30 days) / last year it is Altcoin Season / Month / Year.
-                """.strip())
-            else:
-                self._elements[MarketsSpace.ALT_COIN_INDEX_LABEL].set_text(alt_coin_index_fstring)
+                table = self._elements[MarketsSpace.STATISTICS_TABLE]
+                table.update_rows(stat_metrics_rows)
 
             if MarketsSpace.FILTER_INPUT not in self._elements:
+                ui.separator()
+                ui.label('Bybit market')
                 filter_input = ui.input('Filter')
                 self._elements[MarketsSpace.FILTER_INPUT] = filter_input
             else:

@@ -15,6 +15,10 @@ class Columns:
         {'name': 'total_hidden', 'label': 'Total Hidden', 'field': 'total_hidden', 'align': 'center',
          'classes': 'hidden', 'headerClasses': 'hidden'},
     ]
+    MARKETS_STATISTICS_COLUMNS = [
+        {'name': 'metric', 'label': 'Metric', 'field': 'metric', 'align': 'center', 'sortable': False},
+        {'name': 'value', 'label': 'Value', 'field': 'value', 'align': 'center', 'sortable': False},
+    ]
     MARKETS_TABLE_COLUMNS = [
         {'name': 'key', 'label': 'Key', 'field': 'key', 'align': 'center', 'sortable': True,
          'classes': 'hidden', 'headerClasses': 'hidden'},
@@ -37,8 +41,10 @@ class Columns:
          'sortable': True},
         {'name': 'low_high_percent', 'label': 'Low-High %', 'field': 'low_high_percent', 'align': 'center',
          'sortable': True},
-        {'name': 'volume_24h', 'label': 'USDT Volume 24h', 'field': 'volume_24h', 'align': 'center',
-         'sortable': True},
+        {'name': 'volume_24h', 'label': 'Volume 24h', 'field': 'volume_24h', 'align': 'center',
+         'classes': 'hidden', 'headerClasses': 'hidden'},
+        {'name': 'volume_24h_fstring', 'label': 'Volume 24h', 'field': 'volume_24h_fstring', 'align': 'center',
+         'sortable': True, ':sort': '(a, b, rowA, rowB) => rowA.volume_24h - rowB.volume_24h'},
         {'name': 'launch_datetime', 'label': 'Launch', 'field': 'launch_datetime', 'align': 'center', 'sortable': True},
         {'name': 'max_leverage', 'label': 'Max Leverage', 'field': 'max_leverage', 'align': 'center',
          'classes': 'hidden', 'headerClasses': 'hidden'},

@@ -4,7 +4,7 @@ from typing import Union
 import pprint
 import os
 
-from bots_platform.model.timestamp import TimeStamp
+from bots_platform.model.utils import TimeStamp
 
 
 class Logger:

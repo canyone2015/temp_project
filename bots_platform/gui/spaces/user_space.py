@@ -11,6 +11,11 @@ class UserSpace:
     TRADING_SPACE = 'TRADING_SPACE'
     TRADING_BOTS_SPACE = 'TRADING_BOTS_SPACE'
     LOG_SPACE = 'LOG_SPACE'
+    BALANCE_TIMER = 'BALANCE_TIMER'
+    MARKETS_TIMER = 'MARKETS_TIMER'
+    TRADING_TIMER = 'TRADING_TIMER'
+    TRADING_BOTS_TIMER = 'TRADING_BOTS_TIMER'
+    LOG_TIMER = 'LOG_TIMER'
 
     def __init__(self):
         self._exchange_model: Union[ExchangeModel, None] = None
@@ -36,45 +41,45 @@ class UserSpace:
                         self._elements[UserSpace.BALANCE_SPACE] = balance_space = BalanceSpace()
                         balance_space.set_exchange_model(self._exchange_model)
                         balance_space.set_quit_action(self.quit)
-                        ui.timer(0.0,
-                                 callback=lambda: balance_space.init(),
-                                 once=True)
+                        self._elements[UserSpace.BALANCE_TIMER] = ui.timer(0.0,
+                                                                           callback=lambda: balance_space.init(),
+                                                                           once=True)
                     except:
                         pass
                 with ui.tab_panel(markets_tab):
                     try:
                         self._elements[UserSpace.MARKETS_SPACE] = markets_space = MarketsSpace()
                         markets_space.set_exchange_model(self._exchange_model)
-                        ui.timer(0.0,
-                                 callback=lambda: markets_space.init(),
-                                 once=True)
+                        self._elements[UserSpace.MARKETS_TIMER] = ui.timer(0.0,
+                                                                           callback=lambda: markets_space.init(),
+                                                                           once=True)
                     except:
                         pass
                 with ui.tab_panel(trading_tab):
                     try:
                         self._elements[UserSpace.TRADING_SPACE] = trading_space = TradingSpace()
                         trading_space.set_exchange_model(self._exchange_model)
-                        ui.timer(0.0,
-                                 callback=lambda: trading_space.init(),
-                                 once=True)
+                        self._elements[UserSpace.TRADING_TIMER] = ui.timer(0.0,
+                                                                           callback=lambda: trading_space.init(),
+                                                                           once=True)
                     except:
                         pass
                 with ui.tab_panel(trading_bots_tab):
                     try:
                         self._elements[UserSpace.TRADING_BOTS_SPACE] = trading_bots_space = TradingBotsSpace()
                         trading_bots_space.set_exchange_model(self._exchange_model)
-                        ui.timer(0.0,
-                                 callback=lambda: trading_bots_space.init(),
-                                 once=True)
+                        self._elements[UserSpace.TRADING_BOTS_TIMER] = ui.timer(0.0,
+                                                                                callback=lambda: trading_bots_space.init(),
+                                                                                once=True)
                     except:
                         pass
                 with ui.tab_panel(log_tab):
                     try:
                         self._elements[UserSpace.LOG_SPACE] = log_space = LogSpace()
                         log_space.set_logger(self._exchange_model.logger)
-                        ui.timer(0.0,
-                                 callback=lambda: log_space.init(),
-                                 once=True)
+                        self._elements[UserSpace.LOG_TIMER] = ui.timer(0.0,
+                                                                       callback=lambda: log_space.init(),
+                                                                       once=True)
                     except:
                         pass
 
@@ -89,15 +94,15 @@ class UserSpace:
         self._logout_space = logout_space
 
     async def quit(self):
-        if UserSpace.BALANCE_SPACE not in self._elements:
+        if UserSpace.BALANCE_TIMER not in self._elements or self._elements[UserSpace.BALANCE_TIMER].callback:
             return
-        if UserSpace.MARKETS_SPACE not in self._elements:
+        if UserSpace.MARKETS_TIMER not in self._elements or self._elements[UserSpace.MARKETS_TIMER].callback:
             return
-        if UserSpace.TRADING_SPACE not in self._elements:
+        if UserSpace.TRADING_TIMER not in self._elements or self._elements[UserSpace.TRADING_TIMER].callback:
             return
-        if UserSpace.TRADING_BOTS_SPACE not in self._elements:
+        if UserSpace.TRADING_BOTS_TIMER not in self._elements or self._elements[UserSpace.TRADING_BOTS_TIMER].callback:
             return
-        if UserSpace.LOG_SPACE not in self._elements:
+        if UserSpace.LOG_TIMER not in self._elements or self._elements[UserSpace.LOG_TIMER].callback:
             return
         self._elements[UserSpace.BALANCE_SPACE].detach()
         self._elements[UserSpace.MARKETS_SPACE].detach()

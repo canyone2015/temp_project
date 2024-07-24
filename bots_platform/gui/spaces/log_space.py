@@ -3,7 +3,7 @@ from typing import Union
 import pprint
 
 from bots_platform.model import Logger
-from bots_platform.model import TimeStamp
+from bots_platform.model.utils import TimeStamp
 
 
 class LogSpace:

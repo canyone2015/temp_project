@@ -1,15 +1,16 @@
 from decimal import Decimal
 from typing import Union
 from urllib.request import Request, urlopen
+from threading import RLock
+from collections import defaultdict
 import ccxt
 import asyncio
 import traceback
 import json
 import re
 
-from bots_platform.model.timestamp import TimeStamp
 from bots_platform.model.logger import Logger
-from bots_platform.model.utils import get_symbol, get_market_type, strip_tags
+from bots_platform.model.utils import TimeStamp, get_symbol, format_si_number
 
 
 class MarginModes:
@@ -35,61 +36,68 @@ class ExchangeModel:
         self._stop_types = frozenset({'Close', 'Settle', 'Stop', 'Take', 'Liq', 'TakeOver', 'Adl'})
         self._positions_markers = None
         self._closed_orders_data = None
-        self.__market_cap_regex = re.compile(r'(?:color-(positive|negative).*?)?>([$%+\-.\w]+?)</')
-        self.__volume_regex = self.__market_cap_regex
-        self.__dominance_regex = re.compile(r'>(.*?)</')
+        self.__lock = RLock()
         self.__alt_coin_index_regex = re.compile(r'>\s*?(\d+?)\s*?<')
 
     async def connect(self,
-                exchange: str,
-                api_key: str,
-                api_secret: str,
-                is_testnet: bool,
-                **config_parameters):
-        try:
-            self._exchange = exchange
-            self._api_key = api_key
-            self._api_secret = api_secret
-            self._is_testnet = is_testnet
-            self._config = {
-                'apiKey': self._api_key,
-                'secret': self._api_secret,
-            }
-            self._config.update(config_parameters)
-            self._connection = getattr(ccxt, self._exchange)(self._config)
-            if self._is_testnet:
-                self._connection.enable_demo_trading(True)
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._connection.fetch_balance)
-        except BaseException as e:
-            self._connection = None
-            traceback.print_exc()
-            self.logger.log(*e.args)
-            raise
-        self.logger.log('Connected!')
+                      exchange: str,
+                      api_key: str,
+                      api_secret: str,
+                      is_testnet: bool,
+                      **config_parameters):
+        with self.__lock:
+            try:
+                self._exchange = exchange
+                self._api_key = api_key
+                self._api_secret = api_secret
+                self._is_testnet = is_testnet
+                self._config = {
+                    'apiKey': self._api_key,
+                    'secret': self._api_secret,
+                }
+                self._config.update(config_parameters)
+                self._connection = getattr(ccxt, self._exchange)(self._config)
+                if self._is_testnet:
+                    self._connection.enable_demo_trading(True)
+                await self._async_run(self._connection.fetch_balance)
+            except BaseException as e:
+                self._exchange = None
+                self._connection = None
+                traceback.print_exc()
+                self.logger.log(*e.args)
+                raise
+            self.logger.log('Connected!')
 
     def reconnect(self):
-        self.connect(exchange=self._exchange,
-                     api_key=self._api_key,
-                     api_secret=self._api_secret,
-                     is_testnet=self._is_testnet)
-        self.logger.log('Reconnected!')
+        with self.__lock:
+            self.disconnect()
+            self.connect(exchange=self._exchange,
+                         api_key=self._api_key,
+                         api_secret=self._api_secret,
+                         is_testnet=self._is_testnet)
+            self.logger.log('Reconnected!')
 
     def disconnect(self):
-        self._exchange = None
-        self._config = dict()
-        self._api_key = ''
-        self._api_secret = ''
-        self._is_testnet = False
-        self._connection = None
-        self._margin_mode = ''
-        self._unified_account = False
-        self._ms_index_cache = dict()
-        self._ms_index_cache_ts = 0
-        self.logger.log('Disconnected!')
+        with self.__lock:
+            self._exchange = None
+            self._config = dict()
+            self._api_key = ''
+            self._api_secret = ''
+            self._is_testnet = False
+            self._margin_mode = ''
+            self._unified_account = False
+            self._ms_index_cache = dict()
+            self._ms_index_cache_ts = 0
+            self.logger.log('Disconnected!')
+
+    async def _async_run(self, func, *args):
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, func, *args)
 
     def check_connection(self):
-        return self._connection is not None
+        with self.__lock:
+            if self._connection is None or self._exchange is None:
+                raise Exception('There is no connection.')
 
     def get_base_fee(self):
         return self._base_fee
@@ -119,91 +127,127 @@ class ExchangeModel:
                     return MarginModes.CROSS
             else:
                 self._connection.set_margin_mode(new_margin_mode)
+            self.logger.log(f'Margin mode switched to \"{new_margin_mode}\"!')
         except BaseException as e:
             traceback.print_exc()
             self.logger.log(*e.args)
             raise
-        self.logger.log(f'Margin mode switched to \"{new_margin_mode}\"!')
         return new_margin_mode
 
     async def upgrade_unified_trade_account(self):
         self.check_connection()
         try:
             self._connection.upgrade_unified_trade_account()
+            self.logger.log(f'Unified trade account is upgraded, wait a minute!')
         except BaseException as e:
             traceback.print_exc()
             self.logger.log(*e.args)
             raise
-        self.logger.log(f'Unified trade account is upgraded, wait a minute!')
 
     async def fetch_market_statistics(self, use_cache=True):
+
+        async def load(url: str, headers: dict):
+            request_site = Request(url, headers=headers)
+            data = await self._async_run(urlopen, request_site)
+            return data.read().decode('utf-8')
+
+        def parse_json_line(string: str, *, is_array: bool = False):
+            b_start = '{['[is_array]
+            b_end = '}]'[is_array]
+            depth = 0
+            json_line = ''
+            for x in string:
+                if depth > 0 or x == b_start and depth == 0:
+                    json_line += x
+                if x == b_start:
+                    depth += 1
+                elif x == b_end:
+                    depth -= 1
+                    if depth == 0:
+                        break
+            return json_line
+
+        def Fn(number):
+            number, prefix = format_si_number(number, multiple_min=1_000_000, submultiple_max=None)
+            format_string = '{0' + ':.2f' * bool(number % 1 != 0) + '}{1}'
+            return format_string.format(number, prefix)
+
+        def Fd(number):
+            number, prefix = format_si_number(number, multiple_min=1_000_000, submultiple_max=None)
+            format_string = '${0' + ':.2f' * bool(number % 1 != 0) + '}{1}'
+            return format_string.format(number, prefix)
+
+        def Fp(number):
+            number, prefix = format_si_number(number, multiple_min=1_000_000, submultiple_max=5e-4)
+            format_string = '{0' + ':.2f' * bool(number % 1 != 0) + '}{1}%'
+            return format_string.format(number, prefix)
+
+        def Fps(number):
+            number, prefix = format_si_number(number, multiple_min=1_000_000, submultiple_max=5e-4)
+            format_string = '{0' + ':+.2f' * bool(number % 1 != 0) + '}{1}%'
+            return format_string.format(number, prefix)
+
         headers = {"User-Agent": "Mozilla/5.0"}
+        statistics: defaultdict = defaultdict(lambda: '')
         try:
             if use_cache and self._ms_index_cache:
                 now_timestamp = TimeStamp.get_local_dt_from_now().timestamp()
                 n_seconds = 30
                 if now_timestamp < self._ms_index_cache_ts + n_seconds:
                     return self._ms_index_cache
-            fear_greed_index_user_url = 'https://alternative.me/crypto/fear-and-greed-index/'
-            fear_greed_index_url = 'https://api.alternative.me/fng/?limit=1'
-            loop = asyncio.get_event_loop()
-            request_site = Request(fear_greed_index_url, headers=headers)
-            data = await loop.run_in_executor(None, urlopen, request_site)
-            obj = json.loads(data.read())
-            data_item = obj['data'][0]
-            value = int(data_item['value'])
-            value_classification = str(data_item['value_classification'])
 
-            market_cap_url = 'https://coinmarketcap.com/charts/'
-            market_cap = ''
-            volume_24h_url = market_cap_url
-            volume_24h = ''
-            dominance_url = market_cap_url
-            dominance = ''
             try:
-                request_site = Request(market_cap_url, headers=headers)
-                data = await loop.run_in_executor(None, urlopen, request_site)
-                src_text = data.read().decode('utf-8')
-                try:
-                    p = src_text.find('#market-cap')
-                    text = src_text[p:]
-                    m = self.__volume_regex.search(text)
-                    _, vol = m.groups()
-                    v_sign, v_percent = self.__volume_regex.search(text, m.end()).groups()
-                    if vol and v_sign and v_percent:
-                        sign = '-' if 'negative' in v_sign else '+'
-                        market_cap = f"{vol} ({sign}{v_percent})"
-                except:
-                    pass
-                try:
-                    p = src_text.find('#volume-24h')
-                    text = src_text[p:]
-                    m = self.__volume_regex.search(text)
-                    _, vol = m.groups()
-                    v_sign, v_percent = self.__volume_regex.search(text, m.end()).groups()
-                    if vol and v_sign and v_percent:
-                        sign = '-' if 'negative' in v_sign else '+'
-                        volume_24h = f"{vol} ({sign}{v_percent})"
-                except:
-                    pass
-                try:
-                    p = src_text.find('#bitcoin-dominance')
-                    text = src_text[p:]
-                    dominance = strip_tags(self.__dominance_regex.search(text).group(1))
-                except:
-                    pass
+                main_statistics_url = 'https://coinmarketcap.com/charts/'
+                text = await load(main_statistics_url, headers)
+                start_text = '"topCryptos"'
+                p = text.find(start_text)
+                p_text = text[p + len(start_text):]
+                data = [x['symbol']
+                        for x in json.loads(parse_json_line(p_text, is_array=True))
+                        if not x['symbol'].lower().startswith('other')]
+                statistics['top_cryptos'] = data
+            except:
+                statistics['top_cryptos'] = []
+
+            try:
+                start_text = '"globalMetrics"'
+                p = text.find(start_text)
+                p_text = text[p + len(start_text):]
+                data = json.loads(parse_json_line(p_text))
+                statistics.update({
+                    'cryptocurrencies': data.get('numCryptocurrencies', 0),
+                    'markets': data.get('numMarkets', 0),
+                    'active_exchanges': data.get('activeExchanges', 0),
+                    'market_cap': data.get('marketCap', 0.),  # dollars,
+                    'market_cap_24h_change': data.get('marketCapChange', 0.),  # percents,
+                    'defi_market_cap': data.get('defiMarketCap', 0.),  # dollars,
+                    'stablecoin_volume_24h': data.get('stablecoinVol', 0.),  # dollars,
+                    'stablecoin_volume_24h_change': data.get('stablecoinChange', 0.),  # percents,
+                    'defi_volume_24h': data.get('defiVol', 0.),  # dollars,
+                    'defi_volume_24h_change': data.get('defiChange', 0.),  # percents,
+                    'derivatives_volume_24h': data.get('derivativesVol', 0.),  # dollars
+                    'derivatives_volume_24h_change': data.get('derivativeChange', 0.),  # percents
+                    'volume_24h': data.get('totalVol', 0.),  # dollars
+                    'volume_24h_change': data.get('totalVolChange', 0.),  # percents
+                    'btc_dominance': data.get('btcDominance', 0.),  # percents
+                    'btc_dominance_24h_change': data.get('btcDominanceChange', 0.),  # percents
+                    'eth_dominance': data.get('ethDominance', 0.),  # percents
+                })
+                start_text = '"fearGreedIndexData"'
+                p = text.find(start_text)
+                p_text = text[p + len(start_text):]
+                data = json.loads(parse_json_line(p_text))
+                statistics.update({
+                    'fear_greed_index_value': data.get('currentIndex', dict()).get('score', 0.),
+                    'fear_greed_index_name': data.get('currentIndex', dict()).get('name', 0.),
+                    'fear_greed_index_date': data.get('currentIndex', dict()).get('updateTime', 0.)[:10],
+                })
             except:
                 pass
 
-            alt_coin_index_url = 'https://www.blockchaincenter.net/en/altcoin-season-index/'
-            alt_coin_season_index = ''
-            alt_coin_month_index = ''
-            alt_coin_year_index = ''
             try:
-                loop = asyncio.get_event_loop()
-                request_site = Request(alt_coin_index_url, headers=headers)
-                data = await loop.run_in_executor(None, urlopen, request_site)
-                text = data.read().decode('utf-8')
+                alt_coin_index_url = 'https://www.blockchaincenter.net/en/altcoin-season-index/'
+                text = await load(alt_coin_index_url, headers)
                 p = text.find('tab-content altseasoncontent')
                 text = text[p:]
                 t1 = self.__alt_coin_index_regex.search(text)
@@ -212,43 +256,47 @@ class ExchangeModel:
                 alt_coin_month_index = t2.group(1)
                 t3 = self.__alt_coin_index_regex.search(text, t2.end(0))
                 alt_coin_year_index = t3.group(1)
+                statistics.update({
+                    'alt_coin_season_index': alt_coin_season_index,
+                    'alt_coin_month_index': alt_coin_month_index,
+                    'alt_coin_year_index': alt_coin_year_index,
+                })
             except:
                 pass
 
             local_dt = TimeStamp.get_local_dt_from_now()
-            datetime_fstring = TimeStamp.format_time(local_dt)
             datetime_timestamp = int(local_dt.timestamp())
-            fear_greed_index_string = f'Fear and Greed Index: {value} ({value_classification})'
-            market_cap_fstring = f'Market cap: {market_cap}' if market_cap else ''
-            volume_24h_fstring = f'24h Volume: {volume_24h}' if volume_24h else ''
-            dominance_fstring = f'Dominance: {dominance}' if dominance else ''
-            alt_coin_index_fstring = f'Altcoin Index (season, month, year): '\
-                                     f'{alt_coin_season_index}%, {alt_coin_month_index}%, {alt_coin_year_index}%'\
-                                     if alt_coin_season_index and alt_coin_month_index and alt_coin_year_index else ''
-            self._ms_index_cache = {
-                'datetime_fstring': datetime_fstring,
+            datetime_fstring = TimeStamp.format_time(local_dt)
+            cryptocurrencies_fstring = f"{Fn(statistics['cryptocurrencies'])}"
+            markets_fstring = f"{Fn(statistics['markets'])}"
+            active_exchanges_fstring = f"{Fn(statistics['active_exchanges'])}"
+            market_cap_fstring = f"{Fd(statistics['market_cap'])} ({Fps(statistics['market_cap_24h_change'])}); " +\
+                                 f"{Fd(statistics['defi_market_cap'])}"
+            volume_24h_fstring = f"{Fn(statistics['volume_24h'])} ({Fps(statistics['volume_24h_change'])}); " +\
+                                 f"{Fn(statistics['stablecoin_volume_24h'])} ({Fps(statistics['stablecoin_volume_24h_change'])}); " +\
+                                 f"{Fn(statistics['defi_volume_24h'])} ({Fps(statistics['defi_volume_24h_change'])}); " +\
+                                 f"{Fn(statistics['derivatives_volume_24h'])} ({Fps(statistics['derivatives_volume_24h_change'])})"
+            dominance_fstring = f"{Fp(statistics['btc_dominance'])} ({Fps(statistics['btc_dominance_24h_change'])}); " +\
+                                f"{Fp(statistics['eth_dominance'])}"
+            fear_greed_index_fstring = f"{Fn(statistics['fear_greed_index_value'])} ({statistics['fear_greed_index_name']})"
+            alt_coin_index_fstring = f"{statistics['alt_coin_season_index']}, " +\
+                                     f"{statistics['alt_coin_month_index']}, " +\
+                                     f"{statistics['alt_coin_year_index']}"
+            top_cryptos_fstring = ', '.join(statistics['top_cryptos'])
+            statistics.update({
                 'datetime_timestamp': datetime_timestamp,
-
-                'fear_greed_index_fstring': fear_greed_index_string,
-                'fear_greed_index_url': fear_greed_index_user_url,
-                'fear_greed_index_number': value,
-                'fear_greed_index_classification': value_classification,
-
+                'datetime_fstring': datetime_fstring,
+                'cryptocurrencies_fstring': cryptocurrencies_fstring,
+                'markets_fstring': markets_fstring,
+                'active_exchanges_fstring': active_exchanges_fstring,
                 'market_cap_fstring': market_cap_fstring,
-                'market_cap_url': market_cap_url,
-
-                '24h_volume_fstring': volume_24h_fstring,
-                '24h_volume_url': volume_24h_url,
-
+                'volume_24h_fstring': volume_24h_fstring,
                 'dominance_fstring': dominance_fstring,
-                'dominance_url': dominance_url,
-
+                'fear_greed_index_fstring': fear_greed_index_fstring,
                 'alt_coin_index_fstring': alt_coin_index_fstring,
-                'alt_coin_index_url': alt_coin_index_url,
-                'alt_coin_season_index': alt_coin_season_index,
-                'alt_coin_month_index': alt_coin_month_index,
-                'alt_coin_year_index': alt_coin_year_index,
-            }
+                'top_cryptos_fstring': top_cryptos_fstring,
+            })
+            self._ms_index_cache = statistics
             self._ms_index_cache_ts = datetime_timestamp
             return self._ms_index_cache
         except BaseException as e:
@@ -260,8 +308,7 @@ class ExchangeModel:
         self.check_connection()
         balance_dict = dict()
         try:
-            loop = asyncio.get_event_loop()
-            balance = await loop.run_in_executor(None, self._connection.fetch_balance)
+            balance = await self._async_run(self._connection.fetch_balance)
             balance: dict = dict(balance)
             if balance['info']['retMsg'] != 'OK':
                 raise Exception('Fetching balance error')
@@ -269,7 +316,7 @@ class ExchangeModel:
                 self._margin_mode = MarginModes.ISOLATED
             else:
                 self._margin_mode = MarginModes.CROSS
-            _, unified_account = await loop.run_in_executor(None, self._connection.is_unified_enabled)
+            _, unified_account = await self._async_run(self._connection.is_unified_enabled)
             self._unified_account = unified_account
             balance_dict['margin_mode'] = self._margin_mode
             balance_dict['unified_account'] = self._unified_account
@@ -338,8 +385,7 @@ class ExchangeModel:
             source_symbols = set(source_symbols)
             while True:
                 try:
-                    tickers = await loop.run_in_executor(None, self._connection.fetch_tickers,
-                                                         list(source_symbols))
+                    tickers = await self._async_run(self._connection.fetch_tickers, list(source_symbols))
                     break
                 except ccxt.BadSymbol as e:
                     s = f'{e}'
@@ -355,8 +401,7 @@ class ExchangeModel:
             future_linear_source_symbols = set()
             future_inverse_source_symbols = set()
 
-            loop = asyncio.get_event_loop()
-            markets = await loop.run_in_executor(None, self._connection.fetch_markets)
+            markets = await self._async_run(self._connection.fetch_markets)
             markets_info: dict = dict()
             for x in list(markets):
                 if x['active'] and not x['option'] and (x['spot'] or x['linear'] or x['inverse']):
@@ -447,6 +492,9 @@ class ExchangeModel:
                         maker_taker = ''
                         if maker and taker:
                             maker_taker = f'{maker}/{taker}'
+                        volume_24h_fstring = '{0:.2f}{1}'.format(*format_si_number(volume_24h,
+                                                                                   multiple_min=1000,
+                                                                                   submultiple_max=None))
                         markets_data.append({
                             'type': symbol_tuple[2],
                             'symbol': symbol,
@@ -457,6 +505,7 @@ class ExchangeModel:
                             'close_price_24h': close_price_24h,
                             'open_close_percent': open_close_percent,
                             'low_high_percent': low_high_percent,
+                            'volume_24h_fstring': volume_24h_fstring,
                             'volume_24h': volume_24h,
                             'launch_timestamp': launch_timestamp,
                             'launch_datetime': launch_datetime,
@@ -505,14 +554,13 @@ class ExchangeModel:
         self.check_connection()
         positions = []
         try:
-            loop = asyncio.get_event_loop()
-            positions_data = await loop.run_in_executor(None, self._connection.fetch_positions)
+            positions_data = await self._async_run(self._connection.fetch_positions)
             try:
                 if usdc:
                     if _load_closed_orders_data:
                         closed_orders = self._closed_orders_data
                     else:
-                        closed_orders = await loop.run_in_executor(None, self._connection.fetch_closed_orders)
+                        closed_orders = await self._async_run(self._connection.fetch_closed_orders)
                     perp_contracts = set()
                     for x in closed_orders:
                         if x['info']['symbol'].endswith('PERP'):
@@ -520,7 +568,7 @@ class ExchangeModel:
                     perp_contracts = list(perp_contracts)
                     for symbol in perp_contracts:
                         try:
-                            ps = await loop.run_in_executor(None, self._connection.fetch_positions, symbol)
+                            ps = await self._async_run(self._connection.fetch_positions, symbol)
                             positions_data.extend(ps)
                         except BaseException as e:
                             traceback.print_exc()
@@ -584,17 +632,16 @@ class ExchangeModel:
         self.check_connection()
         open_orders = []
         try:
-            loop = asyncio.get_event_loop()
             positions_data = []
             if not _load_markers:
-                positions_data = await loop.run_in_executor(None, self._connection.fetch_positions)
-            open_orders_data = await loop.run_in_executor(None, self._connection.fetch_open_orders)
+                positions_data = await self._async_run(self._connection.fetch_positions)
+            open_orders_data = await self._async_run(self._connection.fetch_open_orders)
             try:
                 if usdc:
                     if _load_closed_orders_data:
                         closed_orders = self._closed_orders_data
                     else:
-                        closed_orders = await loop.run_in_executor(None, self._connection.fetch_closed_orders)
+                        closed_orders = await self._async_run(self._connection.fetch_closed_orders)
                     perp_contracts = set()
                     for x in closed_orders:
                         if x['info']['symbol'].endswith('PERP'):
@@ -603,13 +650,13 @@ class ExchangeModel:
                     for symbol in perp_contracts:
                         if not _load_markers:
                             try:
-                                ps = await loop.run_in_executor(None, self._connection.fetch_positions, symbol)
+                                ps = await self._async_run(self._connection.fetch_positions, symbol)
                                 positions_data.extend(ps)
                             except BaseException as e:
                                 traceback.print_exc()
                                 self.logger.log(*e.args)
                         try:
-                            os = await loop.run_in_executor(None, self._connection.fetch_open_orders, symbol)
+                            os = await self._async_run(self._connection.fetch_open_orders, symbol)
                             open_orders_data.extend(os)
                         except BaseException as e:
                             traceback.print_exc()
@@ -677,9 +724,8 @@ class ExchangeModel:
                 tp_sl = ''
                 if trigger_price:
                     p = (price / entry_price - 1) * contracts / position_contracts * (-1 if side == 'Short' else 1)
-                    real_value = value / leverage
-                    real_base_value = p * real_value - mark_price * contracts * self._base_fee
-                    tmp = real_base_value / real_value * 100
+                    real_base_value = p * value - mark_price * contracts * self._base_fee
+                    tmp = real_base_value / value * 100
                     base_currency = symbol[1].lower()
                     tp_sl = f"{round(tmp, 2):+}% ({round(real_base_value, 2):+} {base_currency})"
                 elif any([take_profit_limit_price, take_profit_price, stop_loss_limit_price, stop_loss_price]):
@@ -725,8 +771,7 @@ class ExchangeModel:
         self.check_connection()
         closed_orders = []
         try:
-            loop = asyncio.get_event_loop()
-            closed_orders_data = await loop.run_in_executor(None, self._connection.fetch_closed_orders)
+            closed_orders_data = await self._async_run(self._connection.fetch_closed_orders)
             if _save_closed_orders_data:
                 self._closed_orders_data = closed_orders_data
 
@@ -794,7 +839,7 @@ class ExchangeModel:
                     'symbol': symbol
                 })
             try:
-                closed_orders.sort(key=lambda x: x['created_timestamp'])
+                closed_orders.sort(key=lambda x: (x['created_timestamp'], x['is_stop_type']))
                 d = dict()
                 for closed_order in closed_orders:
                     contract = (closed_order['contract'], closed_order['side'])
@@ -839,8 +884,7 @@ class ExchangeModel:
         self.check_connection()
         canceled_orders = []
         try:
-            loop = asyncio.get_event_loop()
-            canceled_orders_data = await loop.run_in_executor(None, self._connection.fetch_canceled_orders)
+            canceled_orders_data = await self._async_run(self._connection.fetch_canceled_orders)
 
             for canceled_order in canceled_orders_data:
                 contracts = Decimal(canceled_order['info']['qty'] or 0)
@@ -911,8 +955,7 @@ class ExchangeModel:
         self.check_connection()
         ledger_result = []
         try:
-            loop = asyncio.get_event_loop()
-            ledger_data = await loop.run_in_executor(None, self._connection.fetch_ledger)
+            ledger_data = await self._async_run(self._connection.fetch_ledger)
 
             for ledger in ledger_data:
                 transaction_timestamp = int(ledger['info']['transactionTime'])

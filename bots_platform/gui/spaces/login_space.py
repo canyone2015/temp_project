@@ -91,9 +91,10 @@ class LoginSpace:
 
         notification.message = 'The connection is established!'
         notification.spinner = False
-        notification.type = 'info'
+        notification.type = 'positive'
 
         self.detach()
 
         await self._enter_user_space()
+        await asyncio.sleep(3)
         notification.dismiss()
