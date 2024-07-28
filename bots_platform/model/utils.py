@@ -1,16 +1,22 @@
 from typing import Union
 from decimal import Decimal
 from datetime import datetime, timezone
-from math import log10
+from math import ceil
+
+
+def decimal_number(number):
+    if isinstance(number, (int, float, Decimal)):
+        return Decimal(f'{number:g}')
+    return decimal_number(Decimal(number))
 
 
 class TimeStamp:
+    UTC_LOCAL_TIME_DIFFERENCE = int(datetime.now().astimezone(None).utcoffset().total_seconds())
+
     @staticmethod
-    def get_dt_from_timestamp(timestamp):
-        if timestamp <= 0:
-            return datetime.now(tz=None)
-        if int(log10(timestamp) + 1) > 10:
-            timestamp /= 1000.0
+    def get_utc_dt_from_timestamp(timestamp):
+        if len(str(timestamp)) > 10:
+            timestamp /= 1000
         return datetime.utcfromtimestamp(timestamp)
 
     @staticmethod
@@ -18,20 +24,76 @@ class TimeStamp:
         return utc_dt.replace(tzinfo=timezone.utc).astimezone(tz=None)
 
     @staticmethod
+    def convert_local_to_utc_dt(utc_dt):
+        return utc_dt.replace(tzinfo=None).astimezone(tz=timezone.utc)
+
+    @staticmethod
+    def convert_utc_to_local_timestamp(utc_timestamp):
+        k = 1
+        if len(str(utc_timestamp)) > 10:
+            k = 1000
+        return utc_timestamp + TimeStamp.UTC_LOCAL_TIME_DIFFERENCE * k
+
+    @staticmethod
+    def convert_local_to_utc_timestamp(local_timestamp):
+        k = 1
+        if len(str(local_timestamp)) > 10:
+            k = 1000
+        return local_timestamp - TimeStamp.UTC_LOCAL_TIME_DIFFERENCE * k
+
+    @staticmethod
     def get_local_dt_from_timestamp(timestamp):
-        return TimeStamp.convert_utc_to_local_dt(TimeStamp.get_dt_from_timestamp(timestamp))
+        return TimeStamp.convert_utc_to_local_dt(TimeStamp.get_utc_dt_from_timestamp(timestamp))
 
     @staticmethod
     def get_local_dt_from_now():
         return datetime.now(tz=None)
 
     @staticmethod
-    def format_time(dt):
+    def get_utc_dt_from_now():
+        return datetime.now(tz=timezone.utc)
+
+    @staticmethod
+    def format_datetime(dt):
         return dt.strftime('%Y-%m-%d %H:%M:%S')
 
     @staticmethod
     def format_date(dt):
         return dt.strftime('%Y-%m-%d')
+
+    @staticmethod
+    def format_time(dt):
+        return dt.strftime('%H:%M:%S')
+
+    @staticmethod
+    def parse_datetime(string, utc=True):
+        return datetime.strptime(string, '%Y-%m-%d %H:%M:%S').astimezone(timezone.utc if utc else None)
+
+    @staticmethod
+    def parse_date(string, utc=True):
+        return datetime.strptime(string, '%Y-%m-%d').astimezone(timezone.utc if utc else None)
+
+    @staticmethod
+    def parse_time(string, utc=True):
+        return datetime.strptime(string, '%H:%M:%S').astimezone(timezone.utc if utc else None)
+
+    @staticmethod
+    def convert_timeframe_to_seconds(tf):
+        q = int(tf[:-1])
+        s = (tf[-1] in 'mhdwM' and 60 or 1) * \
+            (tf[-1] in 'hdwM' and 60 or 1) * \
+            (tf[-1] in 'dwM' and 24 or 1) * \
+            (tf[-1] in 'wM' and 7 or 1) * \
+            (tf[-1] in 'M' and (365.2425 / 12) or 1)
+        return q * s
+
+    @staticmethod
+    def get_number_of_candles(tf, date_from_timestamp, date_to_timestamp):
+        if len(str(date_from_timestamp)) > 10 or len(str(date_to_timestamp)) > 10:
+            date_from_timestamp /= 1000
+            date_to_timestamp /= 1000
+        r = ceil((date_to_timestamp - date_from_timestamp) / TimeStamp.convert_timeframe_to_seconds(tf))
+        return r
 
 
 quote_coins = frozenset({

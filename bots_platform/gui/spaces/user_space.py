@@ -1,7 +1,8 @@
 from nicegui import ui
 from typing import Union
 
-from bots_platform.gui.spaces import BalanceSpace, MarketsSpace, TradingSpace, TradingBotsSpace, LogSpace
+from bots_platform.gui.spaces import BalanceSpace, MarketsSpace, TradingSpace
+from bots_platform.gui.spaces import TradingBotsSpace, GraphsSpace, LogSpace
 from bots_platform.model import ExchangeModel
 
 
@@ -10,11 +11,13 @@ class UserSpace:
     MARKETS_SPACE = 'MARKETS_SPACE'
     TRADING_SPACE = 'TRADING_SPACE'
     TRADING_BOTS_SPACE = 'TRADING_BOTS_SPACE'
+    GRAPHS_SPACE = 'GRAPHS_SPACE'
     LOG_SPACE = 'LOG_SPACE'
     BALANCE_TIMER = 'BALANCE_TIMER'
     MARKETS_TIMER = 'MARKETS_TIMER'
     TRADING_TIMER = 'TRADING_TIMER'
     TRADING_BOTS_TIMER = 'TRADING_BOTS_TIMER'
+    GRAPHS_TIMER = 'GRAPHS_TIMER'
     LOG_TIMER = 'LOG_TIMER'
 
     def __init__(self):
@@ -34,6 +37,7 @@ class UserSpace:
                 markets_tab = ui.tab('Markets')
                 trading_tab = ui.tab('Trading Info')
                 trading_bots_tab = ui.tab('Trading Bots')
+                graphs_tab = ui.tab('Graphs')
                 log_tab = ui.tab('Log')
             with ui.tab_panels(tabs, value=balance_tab).classes('items-center'):
                 with ui.tab_panel(balance_tab):
@@ -73,6 +77,15 @@ class UserSpace:
                                                                                 once=True)
                     except:
                         pass
+                with ui.tab_panel(graphs_tab):
+                    try:
+                        self._elements[UserSpace.GRAPHS_SPACE] = graph_space = GraphsSpace()
+                        graph_space.set_exchange_model(self._exchange_model)
+                        self._elements[UserSpace.GRAPHS_TIMER] = ui.timer(0.0,
+                                                                          callback=lambda: graph_space.init(),
+                                                                          once=True)
+                    except:
+                        pass
                 with ui.tab_panel(log_tab):
                     try:
                         self._elements[UserSpace.LOG_SPACE] = log_space = LogSpace()
@@ -102,12 +115,15 @@ class UserSpace:
             return
         if UserSpace.TRADING_BOTS_TIMER not in self._elements or self._elements[UserSpace.TRADING_BOTS_TIMER].callback:
             return
+        if UserSpace.GRAPHS_TIMER not in self._elements or self._elements[UserSpace.GRAPHS_TIMER].callback:
+            return
         if UserSpace.LOG_TIMER not in self._elements or self._elements[UserSpace.LOG_TIMER].callback:
             return
         self._elements[UserSpace.BALANCE_SPACE].detach()
         self._elements[UserSpace.MARKETS_SPACE].detach()
         self._elements[UserSpace.TRADING_SPACE].detach()
         self._elements[UserSpace.TRADING_BOTS_SPACE].detach()
+        self._elements[UserSpace.GRAPHS_SPACE].detach()
         self._elements[UserSpace.LOG_SPACE].detach()
         self._exchange_model.disconnect()
         self._user_space.delete()

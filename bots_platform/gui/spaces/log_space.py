@@ -30,7 +30,7 @@ class LogSpace:
     def log_data(self, *args, **kwargs):
         s1 = pprint.pformat('; '.join(f"{x}" for x in args)) + '\n' if args else ''
         s2 = pprint.pformat('; '.join(f"({k}:{v})" for k, v in kwargs.items())) + '\n' if kwargs else ''
-        dt_str = TimeStamp.format_time(TimeStamp.get_local_dt_from_now())
+        dt_str = TimeStamp.format_datetime(TimeStamp.get_local_dt_from_now())
         line = f'{dt_str}. {s1}{s2}\n'
         self._log_space.push(line)
 

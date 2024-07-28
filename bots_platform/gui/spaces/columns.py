@@ -170,3 +170,125 @@ class Columns:
         {'name': 'cash_balance', 'label': 'Cash balance', 'field': 'cash_balance', 'align': 'center',
          'sortable': True},
     ]
+    STOCK_CHART = {
+        'parameters': {
+            'symbol': '',
+            'fetch_option': '',
+            'timeframe': '',
+        },
+        'rangeSelector': {
+            'buttons': [
+                {
+                    'type': 'minute',
+                    'count': 30,
+                    'text': '1m'
+                },
+                {
+                    'type': 'hour',
+                    'count': 1,
+                    'text': '1h'
+                },
+                {
+                    'type': 'hour',
+                    'count': 4,
+                    'text': '4h'
+                },
+                {
+                    'type': 'hour',
+                    'count': 12,
+                    'text': '12h'
+                },
+                {
+                    'type': 'day',
+                    'count': 1,
+                    'text': '1d'
+                },
+                {
+                    'type': 'week',
+                    'count': 1,
+                    'text': '1w'
+                },
+                {
+                    'type': 'month',
+                    'count': 1,
+                    'text': '1M'
+                },
+                {
+                    'type': 'year',
+                    'count': 1,
+                    'text': '1y'
+                },
+                {
+                    'type': 'all',
+                    'text': 'All'
+                }
+            ]
+        },
+        'title': {
+            'text': 'Price'
+        },
+        'yAxis': [
+            {
+                'height': '80%',
+                'plotLines': []
+            },
+            {
+                'top': '80%',
+                'height': '20%',
+                'offset': 0,
+                'plotLines': []
+            }
+        ],
+        'series': [
+            {
+                'id': 'price',
+                'type': 'candlestick',
+                'name': 'Price',
+                'data': [],
+                'dataGrouping': {
+                    'approximation': 'ohlc',
+                    'units': [
+                        ['minute', [1, 3, 5, 15, 30]],
+                        ['hour', [1, 2, 4, 8, 6, 12]],
+                        ['day', [1]],
+                        ['week', [1]],
+                        ['month', [1]],
+                        ['year', [1]],
+                    ],
+                    'forced': True,
+                    'enabled': True,
+                    'groupAll': True
+                },
+                'yAxis': 0,
+            },
+            {
+                'id': 'volume',
+                'type': 'column',
+                'name': 'Volume',
+                'data': [],
+                'yAxis': 1,
+            }
+        ],
+        'plotOptions': {
+            'candlestick': {
+                'color': '#F23645',
+                'lineColor': '#F23645',
+                'upColor': '#089981',
+                'upLineColor': '#089981',
+            }
+        }
+    }
+    CURRENT_PRICE_INDICATOR = [
+        {
+            'color': '#F0F0F3',
+            'width': 1,
+            'label': {
+                'style': {
+                    'color': '#F0F0F3',
+                    'fontWeight': 'bold',
+                },
+                'align': 'right',
+                'x': -30,
+            }
+        }
+    ]

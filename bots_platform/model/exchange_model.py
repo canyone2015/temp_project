@@ -1,4 +1,3 @@
-from decimal import Decimal
 from typing import Union
 from urllib.request import Request, urlopen
 from threading import RLock
@@ -10,7 +9,7 @@ import json
 import re
 
 from bots_platform.model.logger import Logger
-from bots_platform.model.utils import TimeStamp, get_symbol, format_si_number
+from bots_platform.model.utils import TimeStamp, get_symbol, format_si_number, decimal_number
 
 
 class MarginModes:
@@ -28,11 +27,13 @@ class ExchangeModel:
         self._api_secret = None
         self._is_testnet = None
         self._connection: Union[ccxt.bybit, None] = None
-        self._base_fee = Decimal('0.001')
+        self._base_fee = decimal_number('0.001')
         self._margin_mode = ''
         self._unified_account = False
         self._ms_index_cache = dict()
         self._ms_index_cache_ts = 0
+        self._markets_symbols_cache = dict()
+        self._markets_symbols_cache_ts = 0
         self._stop_types = frozenset({'Close', 'Settle', 'Stop', 'Take', 'Liq', 'TakeOver', 'Adl'})
         self._positions_markers = None
         self._closed_orders_data = None
@@ -60,6 +61,7 @@ class ExchangeModel:
                 if self._is_testnet:
                     self._connection.enable_demo_trading(True)
                 await self._async_run(self._connection.fetch_balance)
+                await self.fetch_markets_symbols()
             except BaseException as e:
                 self._exchange = None
                 self._connection = None
@@ -168,24 +170,24 @@ class ExchangeModel:
             return json_line
 
         def Fn(number):
+            number = float(number)
             number, prefix = format_si_number(number, multiple_min=1_000_000, submultiple_max=None)
-            format_string = '{0' + ':.2f' * bool(number % 1 != 0) + '}{1}'
-            return format_string.format(number, prefix)
+            return f"{decimal_number(number):.2f}{prefix}"
 
         def Fd(number):
+            number = float(number)
             number, prefix = format_si_number(number, multiple_min=1_000_000, submultiple_max=None)
-            format_string = '${0' + ':.2f' * bool(number % 1 != 0) + '}{1}'
-            return format_string.format(number, prefix)
+            return f"${decimal_number(number):.2f}{prefix}"
 
         def Fp(number):
+            number = float(number)
             number, prefix = format_si_number(number, multiple_min=1_000_000, submultiple_max=5e-4)
-            format_string = '{0' + ':.2f' * bool(number % 1 != 0) + '}{1}%'
-            return format_string.format(number, prefix)
+            return f"{decimal_number(number):.2f}{prefix}%"
 
         def Fps(number):
+            number = float(number)
             number, prefix = format_si_number(number, multiple_min=1_000_000, submultiple_max=5e-4)
-            format_string = '{0' + ':+.2f' * bool(number % 1 != 0) + '}{1}%'
-            return format_string.format(number, prefix)
+            return f"{decimal_number(number):+.2f}{prefix}%"
 
         headers = {"User-Agent": "Mozilla/5.0"}
         statistics: defaultdict = defaultdict(lambda: '')
@@ -266,7 +268,7 @@ class ExchangeModel:
 
             local_dt = TimeStamp.get_local_dt_from_now()
             datetime_timestamp = int(local_dt.timestamp())
-            datetime_fstring = TimeStamp.format_time(local_dt)
+            datetime_fstring = TimeStamp.format_datetime(local_dt)
             cryptocurrencies_fstring = f"{Fn(statistics['cryptocurrencies'])}"
             markets_fstring = f"{Fn(statistics['markets'])}"
             active_exchanges_fstring = f"{Fn(statistics['active_exchanges'])}"
@@ -326,17 +328,17 @@ class ExchangeModel:
                     continue
                 for account_balance in account_balance_list['coin']:
                     coin_name = account_balance['coin']
-                    wallet_balance = Decimal(account_balance['walletBalance'] or 0)
-                    total_order_im = Decimal(account_balance['totalOrderIM'] or 0)
-                    total_position_im = Decimal(account_balance['totalPositionIM'] or 0)
+                    wallet_balance = decimal_number(account_balance['walletBalance'] or 0)
+                    total_order_im = decimal_number(account_balance['totalOrderIM'] or 0)
+                    total_position_im = decimal_number(account_balance['totalPositionIM'] or 0)
                     locked = total_order_im + total_position_im
-                    free = Decimal(account_balance['availableToWithdraw'])
+                    free = decimal_number(account_balance['availableToWithdraw'])
                     if wallet_balance == free:
                         free = wallet_balance - locked
-                    total_pnl = Decimal(account_balance['cumRealisedPnl'] or 0)
+                    total_pnl = decimal_number(account_balance['cumRealisedPnl'] or 0)
                     total_pnl = f"{round(total_pnl, 3):+}"
-                    pnl = Decimal(account_balance['unrealisedPnl'] or 0)
-                    usd_value = Decimal(account_balance['usdValue'] or 0)
+                    pnl = decimal_number(account_balance['unrealisedPnl'] or 0)
+                    usd_value = decimal_number(account_balance['usdValue'] or 0)
                     if round(usd_value, 3) == 0:
                         continue
                     used_coin = f'{round(locked, 6)}{round(pnl, 3):+}' if pnl else f'{round(locked, 6)}'
@@ -377,6 +379,27 @@ class ExchangeModel:
             raise
         return balance_dict
 
+    async def fetch_markets_symbols(self, use_cache=True):
+        now_timestamp = TimeStamp.get_local_dt_from_now().timestamp()
+        if use_cache and self._markets_symbols_cache:
+            n_seconds = 180
+            if now_timestamp < self._markets_symbols_cache_ts + n_seconds:
+                return self._markets_symbols_cache
+        try:
+            markets = await self._async_run(self._connection.fetch_markets)
+            markets_symbols = set()
+            for x in markets:
+                if x['active'] and not x['option'] and (x['spot'] or x['linear'] or x['inverse']):
+                    source_symbol = x['symbol']
+                    markets_symbols.add(source_symbol)
+            self._markets_symbols_cache = markets_symbols
+            self._markets_symbols_cache_ts = now_timestamp
+            return markets_symbols
+        except BaseException as e:
+            traceback.print_exc()
+            self.logger.log(*e.args)
+        return self._markets_symbols_cache
+
     async def fetch_markets(self, filtered_coins=None):
         self.check_connection()
         markets_data = []
@@ -403,7 +426,7 @@ class ExchangeModel:
 
             markets = await self._async_run(self._connection.fetch_markets)
             markets_info: dict = dict()
-            for x in list(markets):
+            for x in markets:
                 if x['active'] and not x['option'] and (x['spot'] or x['linear'] or x['inverse']):
                     source_symbol = x['symbol']
                     if filtered_coins and source_symbol not in filtered_coins:
@@ -419,12 +442,12 @@ class ExchangeModel:
                     elif x['type'] == 'future' and x['inverse']:
                         future_inverse_source_symbols.add(source_symbol)
                     launch_timestamp = int(x['info'].get('launchTime', 0) or 0)
-                    min_leverage = Decimal(x['info'].get('leverageFilter', dict()).get('minLeverage', 0) or 0)
-                    max_leverage = Decimal(x['info'].get('leverageFilter', dict()).get('maxLeverage', 0) or 0)
-                    min_qty = Decimal(x['info'].get('lotSizeFilter', dict()).get('minOrderQty', 0) or 0)
-                    min_notional = Decimal(x['info'].get('lotSizeFilter', dict()).get('minNotionalValue', 0) or 0)
-                    maker = Decimal(str(x.get('maker', 0)) or 0)
-                    taker = Decimal(str(x.get('taker', 0)) or 0)
+                    min_leverage = decimal_number(x['info'].get('leverageFilter', dict()).get('minLeverage', 0) or 0)
+                    max_leverage = decimal_number(x['info'].get('leverageFilter', dict()).get('maxLeverage', 0) or 0)
+                    min_qty = decimal_number(x['info'].get('lotSizeFilter', dict()).get('minOrderQty', 0) or 0)
+                    min_notional = decimal_number(x['info'].get('lotSizeFilter', dict()).get('minNotionalValue', 0) or 0)
+                    maker = decimal_number(str(x.get('maker', 0)) or 0)
+                    taker = decimal_number(str(x.get('taker', 0)) or 0)
                     markets_info[source_symbol] = {
                         'launch_timestamp': launch_timestamp,
                         'min_leverage': min_leverage,
@@ -454,34 +477,34 @@ class ExchangeModel:
                         tickers.update(tmp_tickers)
                     for symbol, ticker in tickers.items():
                         symbol_tuple = get_symbol(symbol)
-                        close_price_24h = Decimal(ticker['info'].get('lastPrice') or 0)
-                        open_price_24h = Decimal(ticker['info'].get('prevPrice24h') or 0)
-                        high_price_24h = Decimal(ticker['info'].get('highPrice24h') or 0)
-                        low_price_24h = Decimal(ticker['info'].get('lowPrice24h') or 0)
+                        close_price_24h = decimal_number(ticker['info'].get('lastPrice') or 0)
+                        open_price_24h = decimal_number(ticker['info'].get('prevPrice24h') or 0)
+                        high_price_24h = decimal_number(ticker['info'].get('highPrice24h') or 0)
+                        low_price_24h = decimal_number(ticker['info'].get('lowPrice24h') or 0)
                         open_close_percent = round((close_price_24h / open_price_24h - 1) * 100, 6)
                         low_high_percent = round((high_price_24h / low_price_24h - 1) * 100, 6)
-                        volume_24h = Decimal(ticker['info'].get('turnover24h') or 0)
-                        vwap = Decimal(ticker.get('vwap', 0) or close_price_24h)
+                        volume_24h = decimal_number(ticker['info'].get('turnover24h') or 0)
+                        vwap = decimal_number(ticker.get('vwap', 0) or close_price_24h)
                         last_trend = round((close_price_24h / vwap - 1) * 100, 6)
                         launch_timestamp = 0
-                        min_leverage = Decimal(0)
-                        max_leverage = Decimal(0)
-                        min_qty = Decimal(0)
-                        min_notional = Decimal(0)
-                        maker = Decimal(0)
-                        taker = Decimal(0)
+                        min_leverage = decimal_number(0)
+                        max_leverage = decimal_number(0)
+                        min_qty = decimal_number(0)
+                        min_notional = decimal_number(0)
+                        maker = decimal_number(0)
+                        taker = decimal_number(0)
                         if symbol in markets_info:
                             symbol_info = markets_info[symbol]
                             launch_timestamp = int(symbol_info['launch_timestamp'])
-                            min_leverage = Decimal(symbol_info['min_leverage'])
-                            max_leverage = Decimal(symbol_info['max_leverage'])
-                            min_qty = Decimal(symbol_info['min_qty'])
-                            min_notional = Decimal(symbol_info['min_notional'])
-                            maker = Decimal(symbol_info['maker'])
-                            taker = Decimal(symbol_info['taker'])
+                            min_leverage = decimal_number(symbol_info['min_leverage'])
+                            max_leverage = decimal_number(symbol_info['max_leverage'])
+                            min_qty = decimal_number(symbol_info['min_qty'])
+                            min_notional = decimal_number(symbol_info['min_notional'])
+                            maker = decimal_number(symbol_info['maker'])
+                            taker = decimal_number(symbol_info['taker'])
                         launch_datetime = ''
                         if launch_timestamp:
-                            launch_datetime = TimeStamp.format_time(
+                            launch_datetime = TimeStamp.format_datetime(
                                 TimeStamp.get_local_dt_from_timestamp(launch_timestamp))
                         leverage = ''
                         if min_leverage and max_leverage:
@@ -532,15 +555,15 @@ class ExchangeModel:
     def _get_positions_markers(positions_data):
         positions_markers = dict()
         for position in positions_data:
-            contracts = Decimal(position['info']['size'] or 0)
+            contracts = decimal_number(position['info']['size'] or 0)
             if not contracts:
                 continue
             contract = position['info']['symbol']
             side = 'Long' if position['info']['side'] == 'buy' else 'Short'
-            value = Decimal(position['info']['positionValue'] or 0)
-            leverage = Decimal(position['info']['leverage'] or 1)
-            entry_price = Decimal(position['info']['avgPrice'])
-            mark_price = Decimal(position['info']['markPrice'])
+            value = decimal_number(position['info']['positionValue'] or 0)
+            leverage = decimal_number(position['info']['leverage'] or 1)
+            entry_price = decimal_number(position['info']['avgPrice'])
+            mark_price = decimal_number(position['info']['markPrice'])
             positions_markers[(contract, side)] = {
                 'contracts': contracts,
                 'value': value,
@@ -579,28 +602,29 @@ class ExchangeModel:
             if _save_markers:
                 self._positions_markers = ExchangeModel._get_positions_markers(positions_data)
             for position in positions_data:
-                contracts = Decimal(position['info']['size'] or 0)
+                contracts = decimal_number(position['info']['size'] or 0)
                 if not contracts:
                     continue
                 created_timestamp = int(position['info']['createdTime'])
-                datetime_string = TimeStamp.format_time(TimeStamp.get_local_dt_from_timestamp(created_timestamp))
+                datetime_string = TimeStamp.format_datetime(
+                    TimeStamp.get_local_dt_from_timestamp(created_timestamp))
                 contract = position['info']['symbol']
-                value = Decimal(position['info']['positionValue'] or 0)
+                value = decimal_number(position['info']['positionValue'] or 0)
                 real_size = round(value, 4)
                 size = f"{contracts}/{real_size}"
                 side = 'Long' if position['info']['side'] == 'buy' else 'Short'
-                leverage = Decimal(position['info']['leverage'] or 1)
+                leverage = decimal_number(position['info']['leverage'] or 1)
                 status = position['info']['positionStatus']
-                unrealized_pnl = Decimal(position['info']['unrealisedPnl'] or 0)
-                realized_pnl = Decimal(position['info']['cumRealisedPnl'] or 0)
-                entry_price = Decimal(position['info']['avgPrice'])
-                mark_price = Decimal(position['info']['markPrice'])
+                unrealized_pnl = decimal_number(position['info']['unrealisedPnl'] or 0)
+                realized_pnl = decimal_number(position['info']['cumRealisedPnl'] or 0)
+                entry_price = decimal_number(position['info']['avgPrice'])
+                mark_price = decimal_number(position['info']['markPrice'])
                 pnl = unrealized_pnl + realized_pnl - mark_price * contracts * self._base_fee
-                liquidation_price = Decimal(position['info']['liqPrice'] or 0)
-                take_profit_price = Decimal(position['info']['takeProfit'] or 0)
-                stop_loss_price = Decimal(position['info']['stopLoss'] or 0)
+                liquidation_price = decimal_number(position['info']['liqPrice'] or 0)
+                take_profit_price = decimal_number(position['info']['takeProfit'] or 0)
+                stop_loss_price = decimal_number(position['info']['stopLoss'] or 0)
                 tp_sl = f'{take_profit_price or "-"}/{stop_loss_price or "-"}'
-                trailing_stop = Decimal(position['info']['trailingStop']) or '-'
+                trailing_stop = decimal_number(position['info']['trailingStop']) or '-'
                 leverage = round(leverage, 2)
                 pnl = round(pnl, 4)
                 unrealized_pnl = round(unrealized_pnl, 4)
@@ -669,24 +693,25 @@ class ExchangeModel:
             else:
                 positions_markers = ExchangeModel._get_positions_markers(positions_data)
             for open_order in open_orders_data:
-                contracts = Decimal(open_order['info']['leavesQty'] or 0)
+                contracts = decimal_number(open_order['info']['leavesQty'] or 0)
                 if not contracts:
                     continue
                 symbol = get_symbol(open_order['symbol'])
                 if not symbol:
                     continue
                 updated_timestamp = int(open_order['info']['updatedTime'])
-                datetime_string = TimeStamp.format_time(TimeStamp.get_local_dt_from_timestamp(updated_timestamp))
+                datetime_string = TimeStamp.format_datetime(
+                    TimeStamp.get_local_dt_from_timestamp(updated_timestamp))
                 contract = open_order['info']['symbol']
                 status = open_order['info']['orderStatus']
-                take_profit_price = Decimal(open_order['info']['takeProfit'] or 0)
-                take_profit_limit_price = Decimal(open_order['info']['tpLimitPrice'] or 0)
+                take_profit_price = decimal_number(open_order['info']['takeProfit'] or 0)
+                take_profit_limit_price = decimal_number(open_order['info']['tpLimitPrice'] or 0)
                 take_profit_trigger = open_order['info']['tpTriggerBy'].replace('Price', '')
-                stop_loss_price = Decimal(open_order['info']['stopLoss'] or 0)
-                stop_loss_limit_price = Decimal(open_order['info']['slLimitPrice'] or 0)
+                stop_loss_price = decimal_number(open_order['info']['stopLoss'] or 0)
+                stop_loss_limit_price = decimal_number(open_order['info']['slLimitPrice'] or 0)
                 stop_loss_trigger = open_order['info']['slTriggerBy'].replace('Price', '')
-                trigger_price = Decimal(open_order['info']['triggerPrice'] or 0)
-                price = Decimal(trigger_price or open_order['info']['price'] or 0)
+                trigger_price = decimal_number(open_order['info']['triggerPrice'] or 0)
+                price = decimal_number(trigger_price or open_order['info']['price'] or 0)
                 trigger_by = open_order['info']['triggerBy'].replace('Price', '')
                 create_type = open_order['info']['createType'].replace('CreateBy', '')
                 create_type = create_type.replace('Closing', 'Close')
@@ -700,7 +725,7 @@ class ExchangeModel:
                     side = 'Long' if side == 'Buy' else 'Short'
                 order_price_type = open_order['info']['orderType']
                 order_type = create_type + bool(order_price_type) * (' ' + order_price_type)
-                mark_price = entry_price = Decimal(open_order['info']['lastPriceOnCreated'] or price)
+                mark_price = entry_price = decimal_number(open_order['info']['lastPriceOnCreated'] or price)
                 reduce_only = open_order['info']['reduceOnly']
                 time_in_force = open_order['info']['timeInForce']
                 if time_in_force == 'GTC':
@@ -776,7 +801,7 @@ class ExchangeModel:
                 self._closed_orders_data = closed_orders_data
 
             for closed_order in closed_orders_data:
-                contracts = Decimal(closed_order['info']['qty'] or 0)
+                contracts = decimal_number(closed_order['info']['qty'] or 0)
                 if not contracts:
                     continue
                 symbol = get_symbol(closed_order['symbol'])
@@ -784,12 +809,13 @@ class ExchangeModel:
                     continue
                 created_timestamp = int(closed_order['info']['createdTime'])
                 updated_timestamp = int(closed_order['info']['updatedTime'])
-                datetime_string = TimeStamp.format_time(TimeStamp.get_local_dt_from_timestamp(updated_timestamp))
+                datetime_string = TimeStamp.format_datetime(
+                    TimeStamp.get_local_dt_from_timestamp(updated_timestamp))
                 contract = closed_order['info']['symbol']
                 status = closed_order['info']['orderStatus']
-                average_price = Decimal(closed_order['info']['avgPrice'] or 0)
-                trigger_price = Decimal(closed_order['info']['triggerPrice'] or 0)
-                price = Decimal(average_price or trigger_price or closed_order['info']['price'] or 0)
+                average_price = decimal_number(closed_order['info']['avgPrice'] or 0)
+                trigger_price = decimal_number(closed_order['info']['triggerPrice'] or 0)
+                price = decimal_number(average_price or trigger_price or closed_order['info']['price'] or 0)
                 trigger_by = closed_order['info']['triggerBy'].replace('Price', '')
                 create_type = closed_order['info']['createType'].replace('CreateBy', '')
                 create_type = create_type.replace('Closing', 'Close')
@@ -806,7 +832,7 @@ class ExchangeModel:
                 order_price_type = closed_order['info']['orderType']
                 order_type = create_type + bool(order_price_type) * (' ' + order_price_type)
                 mark_price = price
-                commission = round(Decimal(closed_order['info']['cumExecFee'] or 0), 4)
+                commission = round(decimal_number(closed_order['info']['cumExecFee'] or 0), 4)
                 reduce_only = closed_order['info']['reduceOnly']
                 time_in_force = closed_order['info']['timeInForce']
                 if time_in_force == 'GTC':
@@ -887,14 +913,15 @@ class ExchangeModel:
             canceled_orders_data = await self._async_run(self._connection.fetch_canceled_orders)
 
             for canceled_order in canceled_orders_data:
-                contracts = Decimal(canceled_order['info']['qty'] or 0)
+                contracts = decimal_number(canceled_order['info']['qty'] or 0)
                 if not contracts:
                     continue
                 symbol = get_symbol(canceled_order['symbol'])
                 if not symbol:
                     continue
                 updated_timestamp = int(canceled_order['info']['updatedTime'])
-                datetime_string = TimeStamp.format_time(TimeStamp.get_local_dt_from_timestamp(updated_timestamp))
+                datetime_string = TimeStamp.format_datetime(
+                    TimeStamp.get_local_dt_from_timestamp(updated_timestamp))
                 contract = canceled_order['info']['symbol']
                 reason = canceled_order['info']['orderStatus']
                 cancel_type = canceled_order['info']['cancelType'].replace('CancelBy', '')
@@ -903,9 +930,9 @@ class ExchangeModel:
                         reason = canceled_order['info']['rejectReason'].replace('EC_', '')
                     else:
                         reason = f"{reason} by {cancel_type}"
-                average_price = Decimal(canceled_order['info']['avgPrice'] or 0)
-                trigger_price = Decimal(canceled_order['info']['triggerPrice'] or 0)
-                price = Decimal(average_price or trigger_price or canceled_order['info']['price'] or 0)
+                average_price = decimal_number(canceled_order['info']['avgPrice'] or 0)
+                trigger_price = decimal_number(canceled_order['info']['triggerPrice'] or 0)
+                price = decimal_number(average_price or trigger_price or canceled_order['info']['price'] or 0)
                 trigger_by = canceled_order['info']['triggerBy'].replace('Price', '')
                 create_type = canceled_order['info']['createType'].replace('CreateBy', '')
                 create_type = create_type.replace('Closing', 'Close')
@@ -959,17 +986,18 @@ class ExchangeModel:
 
             for ledger in ledger_data:
                 transaction_timestamp = int(ledger['info']['transactionTime'])
-                datetime_string = TimeStamp.format_time(TimeStamp.get_local_dt_from_timestamp(transaction_timestamp))
+                datetime_string = TimeStamp.format_datetime(
+                    TimeStamp.get_local_dt_from_timestamp(transaction_timestamp))
                 contract = ledger['info']['symbol']
                 transaction_type = ledger['info']['type']
                 side = ledger['info']['side']
-                quantity = Decimal(ledger['info']['qty'] or 0)
-                filled_price = Decimal(ledger['info']['tradePrice'] or 0)
-                funding = Decimal(ledger['info']['funding'] or 0)
-                fee_paid = 0 if funding else Decimal(ledger['info']['feeRate'] or 0) * filled_price * quantity
-                cash_flow = Decimal(ledger['info']['cashFlow'] or 0)
-                change = Decimal(ledger['info']['change'] or 0)
-                cash_balance = Decimal(ledger['info']['cashBalance'] or 0)
+                quantity = decimal_number(ledger['info']['qty'] or 0)
+                filled_price = decimal_number(ledger['info']['tradePrice'] or 0)
+                funding = decimal_number(ledger['info']['funding'] or 0)
+                fee_paid = 0 if funding else decimal_number(ledger['info']['feeRate'] or 0) * filled_price * quantity
+                cash_flow = decimal_number(ledger['info']['cashFlow'] or 0)
+                change = decimal_number(ledger['info']['change'] or 0)
+                cash_balance = decimal_number(ledger['info']['cashBalance'] or 0)
                 funding = round(funding, 5)
                 fee_paid = round(fee_paid, 5)
                 change = round(change, 5)
@@ -1004,3 +1032,61 @@ class ExchangeModel:
             'closed_orders': closed_orders,
             'canceled_orders': canceled_orders,
         }
+
+    async def create_order(self, symbol, type, side, amount, price, params):
+        self.check_connection()
+        try:
+            self._connection.create_order(symbol, type, side, amount, price, params)
+        except BaseException as e:
+            traceback.print_exc()
+            self.logger.log(*e.args)
+            raise
+
+    async def cancel_order(self, id, symbol, params):
+        self.check_connection()
+        try:
+            self._connection.cancel_order(id, symbol, params)
+        except BaseException as e:
+            traceback.print_exc()
+            self.logger.log(*e.args)
+            raise
+
+    async def get_timeframes(self):
+        self.check_connection()
+        return self._connection.timeframes
+
+    async def fetch_ohlcv(self, symbol, timeframe='1m', since=None, limit=None):
+        self.check_connection()
+        try:
+            return self._connection.fetch_ohlcv(symbol, timeframe, since, limit)
+        except BaseException as e:
+            traceback.print_exc()
+            self.logger.log(*e.args)
+            raise
+
+    async def fetch_mark_ohlcv(self, symbol, timeframe='1m', since=None, limit=None):
+        self.check_connection()
+        try:
+            return self._connection.fetch_mark_ohlcv(symbol, timeframe, since, limit)
+        except BaseException as e:
+            traceback.print_exc()
+            self.logger.log(*e.args)
+            raise
+
+    async def fetch_index_ohlcv(self, symbol, timeframe='1m', since=None, limit=None):
+        self.check_connection()
+        try:
+            return self._connection.fetch_index_ohlcv(symbol, timeframe, since, limit)
+        except BaseException as e:
+            traceback.print_exc()
+            self.logger.log(*e.args)
+            raise
+
+    async def fetch_premium_index_ohlcv(self, symbol, timeframe='1m', since=None, limit=None):
+        self.check_connection()
+        try:
+            return self._connection.fetch_premium_index_ohlcv(symbol, timeframe, since, limit)
+        except BaseException as e:
+            traceback.print_exc()
+            self.logger.log(*e.args)
+            raise
