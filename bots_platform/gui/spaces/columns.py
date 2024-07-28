@@ -175,6 +175,9 @@ class Columns:
             'symbol': '',
             'fetch_option': '',
             'timeframe': '',
+            'real_date_from_timestamp': '',
+            'date_from_timestamp': '',
+            'date_to_timestamp': '',
         },
         'rangeSelector': {
             'buttons': [
@@ -262,12 +265,34 @@ class Columns:
                 'yAxis': 0,
             },
             {
+                'id': 'entry_price',
+                'type': 'line',
+                'name': 'Entry price',
+                'data': [],
+                'yAxis': 0,
+                'marker': {
+                    'enabled': True,
+                    'radius': 5
+                }
+            },
+            {
+                'id': 'current_price',
+                'type': 'line',
+                'name': 'Current price',
+                'data': [],
+                'yAxis': 0,
+                'marker': {
+                    'enabled': True,
+                    'radius': 0
+                }
+            },
+            {
                 'id': 'volume',
                 'type': 'column',
                 'name': 'Volume',
                 'data': [],
                 'yAxis': 1,
-            }
+            },
         ],
         'plotOptions': {
             'candlestick': {
@@ -281,7 +306,7 @@ class Columns:
     CURRENT_PRICE_INDICATOR = [
         {
             'color': '#F0F0F3',
-            'width': 1,
+            'width': 3,
             'label': {
                 'style': {
                     'color': '#F0F0F3',
@@ -289,6 +314,20 @@ class Columns:
                 },
                 'align': 'right',
                 'x': -30,
+            }
+        }
+    ]
+    ENTRY_PRICE_INDICATOR = [
+        {
+            'color': '#1E90FF',
+            'width': 3,
+            'label': {
+                'style': {
+                    'color': '#F0F0F3',
+                    'fontWeight': 'bold',
+                },
+                'align': 'left',
+                'x': 30,
             }
         }
     ]

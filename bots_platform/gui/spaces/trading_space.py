@@ -3,7 +3,7 @@ from typing import Union
 
 from bots_platform.model import ExchangeModel
 from bots_platform.model.utils import get_exchange_trade_url
-from bots_platform.gui.spaces import Columns
+from bots_platform.gui.spaces import Columns, ChartsSpace
 
 
 class TradingSpace:
@@ -21,6 +21,8 @@ class TradingSpace:
         self._trading_space = None
         self._elements = dict()
         self._constructed = False
+        self._charts_space = None
+        self._charts = []
 
     async def init(self):
         self._elements.clear()
@@ -40,6 +42,7 @@ class TradingSpace:
                 self._delete_update_trading_timer()
                 await self.update()
 
+        charts_symbols = dict()
         with self._trading_space:
 
             if TradingSpace.UPDATE_BUTTON not in self._elements:
@@ -71,11 +74,17 @@ class TradingSpace:
                 ledger = await self._exchange_model.fetch_ledger()
             except:
                 pass
-
             for x in positions:
                 x['key'] = f"{x['datetime']} {x['contract']} {x['size']} {x['side']} {x['leverage']} {x['entry_price']}"
                 x['exchange_link'] = get_exchange_trade_url(x['contract'])
-                autocomplete.add(x['contract'])
+                contract = x['contract']
+                autocomplete.add(contract)
+                charts_symbols.setdefault(contract, [None, None, None])
+                timestamp = x['timestamp']
+                timestamp = min(timestamp, charts_symbols[contract][0] or timestamp)
+                side = charts_symbols[contract][1] or x['side']
+                price = charts_symbols[contract][2] or x['entry_price']
+                charts_symbols[contract] = [timestamp, side, price]
             positions.sort(key=lambda x: x['key'], reverse=True)
             if TradingSpace.POSITIONS_TABLE not in self._elements:
                 ui.separator()
@@ -96,7 +105,14 @@ class TradingSpace:
             for x in open_orders:
                 x['key'] = f"{x['datetime']} {x['contract']} {x['size']} {x['side']} {x['order']} {x['price']}"
                 x['exchange_link'] = get_exchange_trade_url(x['contract'])
-                autocomplete.add(x['contract'])
+                contract = x['contract']
+                autocomplete.add(contract)
+                charts_symbols.setdefault(contract, [None, None, None])
+                timestamp = x['timestamp']
+                timestamp = min(timestamp, charts_symbols[contract][0] or timestamp)
+                side = charts_symbols[contract][1] or x['side']
+                price = charts_symbols[contract][2] or x['real_price']
+                charts_symbols[contract] = [timestamp, side, price]
             open_orders.sort(key=lambda x: x['key'], reverse=True)
             if TradingSpace.OPEN_ORDERS_TABLE not in self._elements:
                 ui.separator()
@@ -179,6 +195,8 @@ class TradingSpace:
 
             filter_input.set_autocomplete(list(autocomplete))
 
+            await self._add_update_charts(charts_symbols)
+
             self._elements[TradingSpace.UPDATE_TRADING_TIMER] = ui.timer(10,  # 10 seconds
                                                                          callback=lambda *_: update_trading_callback(),
                                                                          once=True)
@@ -192,6 +210,40 @@ class TradingSpace:
 
     def set_exchange_model(self, model: ExchangeModel):
         self._exchange_model = model
+
+    def set_charts_space(self, charts_space: ChartsSpace):
+        self._charts_space = charts_space
+
+    async def _add_update_charts(self, charts_create):
+        if self._charts_space and (charts_create or self._charts):
+            symbols_to_create = [symbol for symbol in charts_create]
+            charts_update = list()
+            for symbol, chart_data_object in self._charts:
+                if symbol in symbols_to_create:
+                    charts_create.pop(symbol)
+                    charts_update.append(chart_data_object)
+            for symbol, (timestamp, side, price) in charts_create.items():
+                chart = await self._add_chart(symbol, timestamp, side, price)
+                await self._charts_space.update_chart(chart)
+            for chart_data_object in charts_update:
+                await self._charts_space.update_chart(chart_data_object)
+
+    async def _add_chart(self,
+                         symbol,
+                         date_from_timestamp,
+                         side=None,
+                         price=None):
+        chart = await self._charts_space.add_chart(
+            symbol=symbol,
+            timeframe='1m',
+            date_from_timestamp=date_from_timestamp,
+            date_to_timestamp=...,
+            side=side,
+            price=price,
+            block=True
+        )
+        self._charts.append([symbol, chart])
+        return chart
 
     def detach(self):
         try:

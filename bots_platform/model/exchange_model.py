@@ -608,7 +608,7 @@ class ExchangeModel:
                 created_timestamp = int(position['info']['createdTime'])
                 datetime_string = TimeStamp.format_datetime(
                     TimeStamp.get_local_dt_from_timestamp(created_timestamp))
-                contract = position['info']['symbol']
+                contract = position['symbol']
                 value = decimal_number(position['info']['positionValue'] or 0)
                 real_size = round(value, 4)
                 size = f"{contracts}/{real_size}"
@@ -630,6 +630,7 @@ class ExchangeModel:
                 unrealized_pnl = round(unrealized_pnl, 4)
                 realized_pnl = round(realized_pnl, 4)
                 positions.append({
+                    'timestamp': created_timestamp,
                     'datetime': datetime_string,
                     'contract': contract,
                     'real_size': real_size,
@@ -702,7 +703,7 @@ class ExchangeModel:
                 updated_timestamp = int(open_order['info']['updatedTime'])
                 datetime_string = TimeStamp.format_datetime(
                     TimeStamp.get_local_dt_from_timestamp(updated_timestamp))
-                contract = open_order['info']['symbol']
+                contract = open_order['symbol']
                 status = open_order['info']['orderStatus']
                 take_profit_price = decimal_number(open_order['info']['takeProfit'] or 0)
                 take_profit_limit_price = decimal_number(open_order['info']['tpLimitPrice'] or 0)
@@ -773,6 +774,7 @@ class ExchangeModel:
                 real_price = price
                 price = f"{price} ({trigger_by if trigger_by else 'Last'})"
                 open_orders.append({
+                    'timestamp': updated_timestamp,
                     'datetime': datetime_string,
                     'contract': contract,
                     'real_size': real_size,
@@ -811,7 +813,7 @@ class ExchangeModel:
                 updated_timestamp = int(closed_order['info']['updatedTime'])
                 datetime_string = TimeStamp.format_datetime(
                     TimeStamp.get_local_dt_from_timestamp(updated_timestamp))
-                contract = closed_order['info']['symbol']
+                contract = closed_order['symbol']
                 status = closed_order['info']['orderStatus']
                 average_price = decimal_number(closed_order['info']['avgPrice'] or 0)
                 trigger_price = decimal_number(closed_order['info']['triggerPrice'] or 0)
@@ -846,6 +848,7 @@ class ExchangeModel:
                 real_price = price
                 price = f"{price} ({trigger_by if trigger_by else 'Last'})"
                 closed_orders.append({
+                    'timestamp': updated_timestamp,
                     'datetime': datetime_string,
                     'contract': contract,
                     'real_size': real_size,
@@ -922,7 +925,7 @@ class ExchangeModel:
                 updated_timestamp = int(canceled_order['info']['updatedTime'])
                 datetime_string = TimeStamp.format_datetime(
                     TimeStamp.get_local_dt_from_timestamp(updated_timestamp))
-                contract = canceled_order['info']['symbol']
+                contract = canceled_order['symbol']
                 reason = canceled_order['info']['orderStatus']
                 cancel_type = canceled_order['info']['cancelType'].replace('CancelBy', '')
                 if reason in ('Cancelled', 'Canceled'):
@@ -960,6 +963,7 @@ class ExchangeModel:
                 real_price = price
                 price = f"{price} ({trigger_by if trigger_by else 'Last'})"
                 canceled_orders.append({
+                    'timestamp': updated_timestamp,
                     'datetime': datetime_string,
                     'contract': contract,
                     'real_size': real_size,
