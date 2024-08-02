@@ -1,40 +1,24 @@
 from nicegui import ui
 from typing import Union
-from datetime import timedelta
-from copy import deepcopy
 import traceback
-import json
-import os
 
-from bots_platform.gui.spaces import Columns
-from bots_platform.model import ExchangeModel
-from bots_platform.model.utils import get_exchange_trade_url, get_trading_view_url, TimeStamp, decimal_number
+from bots_platform.gui.chart import StockChartUiComponent
+from bots_platform.model.workers import ChartsWorker
+from bots_platform.model import TimeStamp
 
 
 class ChartsSpace:
-    UPDATE_BUTTON = 'UPDATE_BUTTON'
+    UPDATE_CHARTS_CHECKBOX = 'UPDATE_CHARTS_CHECKBOX'
+    UPDATE_CHARTS_TIMER = 'UPDATE_CHARTS_TIMER'
     CHARTS_BOX = 'CHARTS_BOX'
 
     def __init__(self):
-        self._exchange_model: Union[ExchangeModel, None] = None
+        self._charts_worker: Union[ChartsWorker, None] = None
         self._charts_space = None
         self._elements = dict()
         self._constructed = False
-        self._fetch_options = {
-            'OHLCV': ExchangeModel.fetch_ohlcv,
-            'MARK': ExchangeModel.fetch_mark_ohlcv,
-            'INDEX': ExchangeModel.fetch_index_ohlcv,
-            'PREMIUM_INDEX': ExchangeModel.fetch_premium_index_ohlcv,
-        }
-        self._timeframes = [
-            '1m', '3m', '5m', '15m', '30m',
-            '1h', '2h', '4h', '6h', '12h',
-            '1d', '1w', '1M',
-        ]
-        self._markets_symbols = set()
         self._charts = []
-        self._theme = dict()
-        self._load_theme()
+        self._auto_charts = dict()
 
     async def init(self):
         self._elements.clear()
@@ -45,194 +29,58 @@ class ChartsSpace:
         self._constructed = True
 
     async def update(self):
-        notification = ui.notification(timeout=8, close_button=True)
-        notification.message = 'Updating charts...'
+        notification = ui.notification(timeout=10, close_button=True)
+        notification.message = 'Updating custom charts...'
         notification.spinner = True
 
-        async def update_charts_callback():
-            if self._constructed:
-                await self.update()
-
-        async def add_chart_callback():
-            if self._constructed:
-                try:
-                    await self.add_chart()
-                except BaseException:
-                    traceback.print_exc()
-                await self.update()
+        async def add_chart_triggered(*, complex):
+            if not self._constructed:
+                return
+            self._constructed = False
+            try:
+                self._delete_update_charts_timer()
+                self.add_custom_chart(complex=complex)
+                await self._auto_update_timer_check()
+            except:
+                pass
+            self._constructed = True
 
         with self._charts_space:
+            try:
+                await self._charts_worker.fetch_exchange_contracts(
+                    number_of_seconds_to_update=10*60
+                )
+            except:
+                pass
 
-            if ChartsSpace.UPDATE_BUTTON not in self._elements:
-                update_button = ui.button('Update',
-                                          on_click=lambda *_: update_charts_callback()).classes('m-auto')
-                self._elements[ChartsSpace.UPDATE_BUTTON] = update_button
+            if ChartsSpace.UPDATE_CHARTS_CHECKBOX not in self._elements:
+                update_charts_checkbox = ui.checkbox('Auto update charts',
+                                                     value=False,
+                                                     on_change=lambda *_:
+                                                     self._auto_update_timer_check())
+                self._elements[ChartsSpace.UPDATE_CHARTS_CHECKBOX] = update_charts_checkbox
 
             if ChartsSpace.CHARTS_BOX not in self._elements:
-                ui.button('Add chart', on_click=lambda *_: add_chart_callback()).classes('m-auto')
+                with ui.column():
+                    ui.button('Add chart',
+                              on_click=lambda *_: add_chart_triggered(complex=False)).classes('m-auto')
+                    ui.button('Add complex chart',
+                              on_click=lambda *_: add_chart_triggered(complex=True)).classes('m-auto')
                 charts_box = ui.column().classes('w-full items-center')
                 self._elements[ChartsSpace.CHARTS_BOX] = charts_box
 
-            await self.update_charts()
+            await self.update_custom_charts()
+            await self._auto_update_timer_check()
 
         notification.spinner = False
         notification.dismiss()
 
-    @staticmethod
-    def __validate_datestr(x):
-        if len(x) != 10:
-            return 'YYYY-mm-dd'
-        try:
-            TimeStamp.parse_date(x, utc=True)
-        except:
-            return 'Invalid date'
-
-    async def add_chart(self,
-                        symbol='',
-                        timeframe='1m',
-                        date_from_timestamp: Union[int, None, ...] = None,
-                        date_to_timestamp: Union[int, None, ...] = None,
-                        side=None,
-                        price=None,
-                        block=False):
-
-        async def update_chart_callback():
-            await self._update_chart(symbol_input, fetch_input,
-                                     timeframe_input, chart,
-                                     date_from, date_to)
-
-        def exchange_callback():
-            nonlocal symbol_input
-            v = symbol_input.value
-            if v in self._markets_symbols:
-                ui.navigate().to(get_exchange_trade_url(v), new_tab=True)
-            else:
-                ui.notify('Market symbol not found!', close_button=True, type='warning')
-
-        def trading_view_callback():
-            nonlocal symbol_input
-            v = symbol_input.value
-            if v in self._markets_symbols:
-                ui.navigate().to(get_trading_view_url(v), new_tab=True)
-            else:
-                ui.notify('Market symbol not found!', close_button=True, type='warning')
-
-        def symbol_input_on_change(e):
-            nonlocal symbol_input
-            v = symbol_input.value
-            v_upper = symbol_input.value.upper()
-            if v != v_upper:
-                symbol_input.set_value(v_upper)
-
-        def insert_date_input(string, str_date):
-            with ui.input(string, validation=ChartsSpace.__validate_datestr) as date_input:
-                with ui.menu().props('no-parent-event') as menu:
-                    with ui.date().bind_value(date_input):
-                        with ui.row().classes('justify-end'):
-                            ui.button('Close', on_click=menu.close).props('flat')
-                with date_input.add_slot('append'):
-                    ui.icon('edit_calendar').on('click', menu.open).classes('cursor-pointer')
-                date_input.set_value(str_date)
-            return date_input
-
-        if ChartsSpace.CHARTS_BOX in self._elements:
-            try:
-                markets_symbols = await self._exchange_model.fetch_markets_symbols()
-            except:
-                return
-            self._markets_symbols = markets_symbols
-            autocomplete = list(self._markets_symbols)
-            charts_box = self._elements[ChartsSpace.CHARTS_BOX]
-            with charts_box:
-                chart_box = ui.column().classes('w-full items-center')
-                with chart_box:
-                    with ui.row():
-                        in_row_style = 'margin: auto auto;'
-                        ui.button('TradingView', on_click=trading_view_callback, color='black').style(in_row_style)
-                        ui.button('Bybit', on_click=exchange_callback, color='black').style(in_row_style)
-                        symbol_input = ui.input('Symbol',
-                                                value=symbol,
-                                                autocomplete=autocomplete,
-                                                on_change=symbol_input_on_change,
-                                                validation=lambda x: None if x in self._markets_symbols else 'Not found')
-                        previous_dt = int((TimeStamp.get_utc_dt_from_now() - timedelta(days=1)).timestamp())
-                        previous_dt = TimeStamp.convert_utc_to_local_timestamp(previous_dt)
-                        previous_dt = TimeStamp.get_utc_dt_from_timestamp(previous_dt)
-                        current_dt = int(TimeStamp.get_utc_dt_from_now().timestamp())
-                        current_dt = TimeStamp.convert_utc_to_local_timestamp(current_dt)
-                        current_dt = TimeStamp.get_utc_dt_from_timestamp(current_dt)
-                        b11, b12 = date_from_timestamp is None, date_to_timestamp is None
-                        b21, b22 = date_from_timestamp is ..., date_to_timestamp is ...
-                        if b11 and b12:
-                            str_date_from = TimeStamp.format_date(previous_dt)
-                            str_date_to = TimeStamp.format_date(current_dt)
-                        elif b11:
-                            if b22:
-                                date_to_timestamp = current_dt.timestamp()
-                            str_date_from = str_date_to = TimeStamp.format_date(
-                                TimeStamp.get_utc_dt_from_timestamp(date_to_timestamp))
-                        elif b12:
-                            if b21:
-                                date_from_timestamp = current_dt.timestamp()
-                            str_date_to = str_date_from = TimeStamp.format_date(
-                                TimeStamp.get_utc_dt_from_timestamp(date_from_timestamp))
-                        else:
-                            if b21:
-                                date_from_timestamp = current_dt.timestamp()
-                            if b22:
-                                date_to_timestamp = current_dt.timestamp()
-                            if date_from_timestamp > date_to_timestamp:
-                                date_to_timestamp = date_from_timestamp
-                            str_date_from = TimeStamp.format_date(
-                                TimeStamp.get_utc_dt_from_timestamp(date_from_timestamp))
-                            str_date_to = TimeStamp.format_date(
-                                TimeStamp.get_utc_dt_from_timestamp(date_to_timestamp))
-                        date_from = insert_date_input('From', str_date_from)
-                        date_to = insert_date_input('To', str_date_to)
-                        fetch_input = ui.select(options=sorted(self._fetch_options),
-                                                value='OHLCV')
-                        timeframe_input = ui.select(options=self._timeframes,
-                                                    value=timeframe)
-                        if not block:
-                            ui.button('Fetch', on_click=update_chart_callback).style(in_row_style)
-                    chart = ui.highchart(deepcopy(Columns.STOCK_CHART),
-                                         type='stockChart',
-                                         extras=['stock', 'accessibility']
-                                         ).style("width:1000px;height:700px;")
-                    self._set_theme(chart.options)
-                    chart.update()
-                    dft = date_from_timestamp
-                    chart_data_object = [symbol_input, fetch_input,
-                                         timeframe_input, chart,
-                                         date_from, date_to, side, price, dft]
-                    if block:
-                        symbol_input.disable()
-                        fetch_input.disable()
-                        date_to.disable()
-                    self._charts.append(chart_data_object)
-            return chart_data_object
-
-    async def update_chart(self, chart_data_object):
-        (symbol_input, fetch_input, timeframe_input,
-         chart, date_from, date_to, side, price, dft) = chart_data_object
-        await self._update_chart(symbol_input, fetch_input,
-                                 timeframe_input, chart,
-                                 date_from, date_to, side, price, dft)
-
-    async def update_charts(self):
-        for x in self._charts:
-            (symbol_input, fetch_input, timeframe_input,
-             chart, date_from, date_to, side, price, dft) = x
-            await self._update_chart(symbol_input, fetch_input,
-                                     timeframe_input, chart,
-                                     date_from, date_to, side, price, dft)
-
     def check(self):
-        if self._charts_space is None or self._exchange_model is None:
+        if self._charts_space is None or self._charts_worker is None:
             raise Exception(f'{type(self).__name__} is not initialized')
 
-    def set_exchange_model(self, model: ExchangeModel):
-        self._exchange_model = model
+    def set_charts_worker(self, charts_worker: ChartsWorker):
+        self._charts_worker = charts_worker
 
     def detach(self):
         try:
@@ -243,174 +91,231 @@ class ChartsSpace:
         self._elements.clear()
         self._charts_space = None
 
-    async def _fetch_chart_data(self,
-                                symbol,
-                                timeframe,
-                                date_from_timestamp,
-                                date_to_timestamp,
-                                tohlc,
-                                volumes,
-                                fetch_func):
-        candles = TimeStamp.get_number_of_candles(timeframe,
-                                                  date_from_timestamp,
-                                                  date_to_timestamp)
-        candles_needed = candles - len(tohlc) + bool(len(tohlc) == candles)
-        if candles_needed == 0:
+    async def _auto_update_timer_check(self):
+        if ChartsSpace.UPDATE_CHARTS_CHECKBOX not in self._elements:
             return
-        full_data = []
-        current_timestamp = TimeStamp.convert_local_to_utc_timestamp(
-            tohlc[-1][0] if tohlc else date_from_timestamp)
-        while True:
-            data = await fetch_func(self._exchange_model, symbol,
-                                    timeframe=timeframe,
-                                    since=current_timestamp,
-                                    limit=candles_needed)
-            if not full_data and not tohlc and date_from_timestamp < data[0][0]:
-                date_from_timestamp = data[0][0]
-                candles = TimeStamp.get_number_of_candles(timeframe,
-                                                          date_from_timestamp,
-                                                          date_to_timestamp)
-                candles_needed = candles - len(tohlc) + bool(len(tohlc) == candles)
-                if candles_needed == 0:
-                    return
-                continue
-            if not len(data):
-                break
-            full_data.extend(data)
-            candles_needed -= len(data)
-            if candles_needed <= 0:
-                break
-            timestamp = current_timestamp
-            current_timestamp = data[-1][0]
-            if timestamp == current_timestamp:
-                break
-        tmp_data = []
-        for x in full_data:
-            if not tmp_data or tmp_data[-1][0] < x[0]:
-                tmp_data.append(x)
-        full_data = tmp_data
-        new_tohlc = []
-        new_volumes = []
-        for x in full_data:
-            timestamp, *ohlcv = x
-            timestamp = TimeStamp.convert_utc_to_local_timestamp(timestamp)
-            open, high, low, close, volume = [decimal_number(x) for x in ohlcv]
-            new_tohlc.append([timestamp, open, high, low, close])
-            new_volumes.append([timestamp, volume])
-        if tohlc and full_data and tohlc[-1][0] == new_tohlc[0][0]:
-            tohlc.pop(-1)
-            volumes.pop(-1)
-        tohlc.extend(new_tohlc)
-        volumes.extend(new_volumes)
-        return date_from_timestamp
+        update_charts_checkbox = self._elements[ChartsSpace.UPDATE_CHARTS_CHECKBOX]
+        self._delete_update_charts_timer()
+        if update_charts_checkbox.value:
+            update_charts_timer = ui.timer(10.0,  # 10 seconds
+                                           callback=lambda *_: self.update(),
+                                           once=True)
+            self._elements[ChartsSpace.UPDATE_CHARTS_TIMER] = update_charts_timer
+
+    def _delete_update_charts_timer(self):
+        if ChartsSpace.UPDATE_CHARTS_TIMER in self._elements:
+            try:
+                update_charts_timer = self._elements.pop(ChartsSpace.UPDATE_CHARTS_TIMER)
+                update_charts_timer.cancel()
+                update_charts_timer.delete()
+            except:
+                pass
+
+    def add_custom_chart(self, *, complex=False):
+
+        def delete_chart_triggered(*_, **__):
+            charts_box.remove(chart_col)
+            self._charts.remove(stock_chart)
+
+        async def update_chart_triggered(chart, *_, **__):
+            await self._update_chart(chart)
+
+        if ChartsSpace.CHARTS_BOX in self._elements:
+            charts_box: ui.column = self._elements[ChartsSpace.CHARTS_BOX]
+            with charts_box:
+                with ui.column().classes('w-full items-center') as chart_col:
+                    stock_chart = StockChartUiComponent()
+                    stock_chart.set_custom_mode(True)
+                    stock_chart.set_contracts(self._charts_worker.get_contracts())
+                    timeframes = self._charts_worker.get_timeframes()
+                    stock_chart.set_timeframes(timeframes)
+                    price_types = self._charts_worker.get_price_types()
+                    stock_chart.set_price_types(price_types)
+                    stock_chart.set_update_chart_callback(update_chart_triggered)
+                    prev_date = TimeStamp.format_date(TimeStamp.get_local_dt_from_now() - TimeStamp.timedelta(days=1))
+                    stock_chart.create(
+                        contract=r'''BTC/USDT:USDT''',
+                        date_from_str=prev_date,
+                        date_to_str='',
+                        timeframe=timeframes[0],
+                        price_type=price_types[0],
+                        chart_type='candlestick',
+                        chart_style='width:1000px;height:700px;',
+                        complex=complex
+                    )
+                    stock_chart.check()
+                    stock_chart.update()
+                    self._charts.append(stock_chart)
+                    ui.button('Delete chart', on_click=delete_chart_triggered)
+                    ui.separator()
+                    return stock_chart
+
+    async def update_custom_charts(self):
+        for stock_chart in self._charts:
+            if stock_chart.is_custom():
+                await self._update_chart(stock_chart, timer_update=True)
 
     async def _update_chart(self,
-                            symbol_input: ui.input,
-                            fetch_input: ui.select,
-                            timeframe_input: ui.select,
-                            chart: ui.chart,
-                            date_from: ui.input,
-                            date_to: ui.input,
-                            side=None,
-                            price=None,
-                            dft=None):
-        fetch_option = fetch_input.value
-        fetch_func = self._fetch_options[fetch_option]
-        symbol = symbol_input.value.upper()
-        timeframe = timeframe_input.value
-        date_from_str = date_from.value
-        date_to_str = date_to.value
-        if (not fetch_func or
-            not timeframe or
-            symbol not in self._markets_symbols or
-            ChartsSpace.__validate_datestr(date_from_str) is not None or
-            ChartsSpace.__validate_datestr(date_to_str) is not None):
+                            stock_chart: StockChartUiComponent, *,
+                            timer_update: bool = False):
+        stock_data = stock_chart.get_stock_data()
+        parameters = stock_data['parameters']
+        p_contract = parameters['contract']
+        p_date_from = parameters['date_from']
+        p_date_to = parameters['date_to']
+        p_timeframe = parameters['timeframe']
+        p_price_type = parameters['price_type']
+        p_real_date_from = parameters['real_date_from']
+        ohlc_data = stock_data['ohlc']
+        volume_data = stock_data['volume']
+        stock_data_input = stock_data['input']
+        contract = stock_data_input['contract']
+        date_from = stock_data_input['date_from']
+        date_to = stock_data_input['date_to']
+        timeframe = stock_data_input['timeframe']
+        price_type = stock_data_input['price_type']
+
+        if not contract or timer_update and 'random' in contract.lower():
             return
-        dtimestamp = int(TimeStamp.parse_date(date_from_str, utc=True).timestamp())
-        date_from_timestamp = TimeStamp.convert_utc_to_local_timestamp(dtimestamp) * 1000
-        dtimestamp = int((TimeStamp.parse_date(date_to_str, utc=True) + timedelta(days=1)).timestamp())
-        date_to_timestamp = TimeStamp.convert_utc_to_local_timestamp(dtimestamp) * 1000
-        dft = TimeStamp.convert_utc_to_local_timestamp(dft)
+
+        b_clear = False
+        if contract != p_contract:
+            b_clear = True
+        if date_from != p_date_from:
+            b_clear = True
+        if date_to != p_date_to:
+            b_clear = True
+        if timeframe != p_timeframe:
+            b_clear = True
+        if price_type != p_price_type:
+            b_clear = True
+
+        date_from_timestamp = None
+        date_to_timestamp = ...
+        if date_from:
+            date_from_timestamp = int(TimeStamp.parse_date(date_from, utc=True).timestamp())
+            date_from_timestamp = TimeStamp.convert_utc_to_local_timestamp(date_from_timestamp)
+        if date_to:
+            date_to_timestamp = int(TimeStamp.parse_date(date_to, utc=True).timestamp())
+            date_to_timestamp = TimeStamp.convert_utc_to_local_timestamp(date_to_timestamp)
+        date_from_timestamp, date_to_timestamp = TimeStamp.get_timestamps_range(
+            date_from_timestamp, date_to_timestamp, utc=False)
+
+        if b_clear or 'random' in contract.lower():
+            ohlc_data.clear()
+            volume_data.clear()
+            p_real_date_from = date_from_timestamp
+
         try:
-            tohlc = chart.options['series'][0]['data']
-            entry_price_series = chart.options['series'][1]['data']
-            current_price_series = chart.options['series'][2]['data']
-            volumes = chart.options['series'][3]['data']
-            parameters = chart.options['parameters']
-            if (parameters['symbol'] != symbol or
-                parameters['fetch_option'] != fetch_option or
-                parameters['timeframe'] != timeframe or
-                parameters['date_from_timestamp'] != date_from_timestamp or
-                parameters['date_to_timestamp'] != date_to_timestamp):
-                tohlc.clear()
-                volumes.clear()
-                parameters['real_date_from_timestamp'] = date_from_timestamp
-            real_date_from_timestamp = parameters['real_date_from_timestamp']
-            real_date_from_timestamp = await self._fetch_chart_data(
-                symbol,
-                timeframe,
-                real_date_from_timestamp,
-                date_to_timestamp,
-                tohlc,
-                volumes,
-                fetch_func
+            chart_data = await self._charts_worker.update_chart_data(
+                contract=contract,
+                date_from=p_real_date_from,
+                date_to=date_to_timestamp,
+                timeframe=timeframe,
+                price_type=price_type,
+                ohlc_data=ohlc_data,
+                volume_data=volume_data
             )
-            parameters['symbol'] = symbol
-            parameters['fetch_option'] = fetch_option
-            parameters['timeframe'] = timeframe
-            parameters['real_date_from_timestamp'] = real_date_from_timestamp
-            parameters['date_from_timestamp'] = date_from_timestamp
-            parameters['date_to_timestamp'] = date_to_timestamp
-            chart.options['series'][0]['name'] = f"{symbol} ({fetch_option})"
-            chart.options['title']['text'] = f"{symbol} ({fetch_option})"
-            if tohlc:
-                all_indicators = []
-                cpi = deepcopy(Columns.CURRENT_PRICE_INDICATOR)
-                cpi[0]['value'] = current_price = decimal_number(tohlc[-1][-1])
-                current_price_series.clear()
-                current_price_series.append([tohlc[-1][0], current_price])
-                if price is not None and side is not None:
-                    entry_price = decimal_number(price)
-                    entry_price_series.clear()
-                    entry_price_series.append([dft, entry_price])
-                    green = '#b9ee67'
-                    red = '#ee67b9'
-                    if (side.lower() == 'long' and entry_price < current_price or
-                            side.lower() == 'short' and entry_price > current_price):
-                        cpi[0]['color'] = green
-                    else:
-                        cpi[0]['color'] = red
-                    epi = deepcopy(Columns.ENTRY_PRICE_INDICATOR)
-                    epi[0]['value'] = entry_price
-                    all_indicators.extend(epi)
-                all_indicators.extend(cpi)
-                chart.options['yAxis'][0]['plotLines'] = all_indicators
-            chart.update()
-        except BaseException:
+            p_real_date_from = chart_data['date_from']
+            ohlc_data = chart_data['ohlc']
+            volume_data = chart_data['volume']
+        except:
             traceback.print_exc()
 
-    def _load_theme(self):
-        try:
-            filename = os.path.join(os.path.dirname(__file__), "high_contrast_dark_theme.json")
-            with open(filename, 'r+', encoding='utf-8') as fp:
-                self._theme = json.load(fp)
-        except BaseException:
-            traceback.print_exc()
+        stock_data['title'] = f"{contract} ({price_type})"
+        stock_data['ohlc'] = ohlc_data
+        stock_data['volume'] = volume_data
 
-    def _set_theme(self, options: dict):
-        tmp = [[options, self._theme]]
-        while tmp:
-            item, tail = tmp.pop()
-            if isinstance(item, dict) and isinstance(tail, dict):
-                for k, v in tail.items():
-                    if k in item:
-                        tmp.append([item[k], tail[k]])
-                    else:
-                        item[k] = tail[k]
-            elif isinstance(item, list) and isinstance(tail, list):
-                for v in tail:
-                    if v not in item:
-                        item.append(v)
-            elif isinstance(item, list) and isinstance(tail, dict):
-                for x in item:
-                    tmp.append([x, tail])
+        parameters['contract'] = contract
+        parameters['date_from'] = date_from
+        parameters['date_to'] = date_to
+        parameters['timeframe'] = timeframe
+        parameters['price_type'] = price_type
+        parameters['real_date_from'] = p_real_date_from
+
+        stock_chart.set_stock_data(stock_data)
+
+    async def add_update_auto_chart(self, *,
+                                    first_timestamp,
+                                    contract: str,
+                                    side: str,
+                                    objects: list,
+                                    timeframe: str = '1m',
+                                    price_type: str = 'OHLCV',
+                                    chart_type='candlestick',
+                                    complex: bool = False,
+                                    last_update: bool = False):
+
+        key = (first_timestamp, contract, side)
+        if key in self._auto_charts:
+            stock_chart = self._auto_charts[key]
+            if stock_chart == 'deleted':
+                return
+            await self._update_chart(stock_chart)
+            stock_data = stock_chart.get_stock_data(clear_series=True, clear_lines=True)
+            stock_data['new_object_contract'] = objects
+            stock_chart.set_stock_data(stock_data)
+            if last_update:
+                self._auto_charts[key] = 'deleted'
+            return
+        if last_update:
+            return
+
+        def delete_chart_triggered(*_, **__):
+            self._auto_charts[key] = 'deleted'
+            charts_box.remove(chart_col)
+            self._charts.remove(stock_chart)
+
+        async def update_chart_triggered(*_, **__):
+            pass
+
+        async def dialog_yes():
+            nonlocal dialog
+            delete_chart_triggered()
+            dialog.close()
+
+        async def dialog_no():
+            nonlocal dialog
+            dialog.close()
+
+        if ChartsSpace.CHARTS_BOX in self._elements:
+            charts_box: ui.column = self._elements[ChartsSpace.CHARTS_BOX]
+            with charts_box:
+                with ui.column().classes('w-full items-center') as chart_col:
+                    stock_chart = StockChartUiComponent()
+                    stock_chart.set_custom_mode(False)
+                    stock_chart.set_contracts(self._charts_worker.get_contracts())
+                    timeframes = self._charts_worker.get_timeframes()
+                    stock_chart.set_timeframes(timeframes)
+                    price_types = self._charts_worker.get_price_types()
+                    stock_chart.set_price_types(price_types)
+                    stock_chart.set_update_chart_callback(update_chart_triggered)
+                    prev_date = TimeStamp.convert_local_to_utc_timestamp(first_timestamp)
+                    prev_date = TimeStamp.format_date(TimeStamp.get_utc_dt_from_timestamp(prev_date))
+                    stock_chart.create(
+                        contract=contract,
+                        date_from_str=prev_date,
+                        date_to_str='',
+                        timeframe=timeframe,
+                        price_type=price_type,
+                        chart_type=chart_type,
+                        chart_style='width:1000px;height:700px;',
+                        complex=complex
+                    )
+                    stock_chart.check()
+                    await self._update_chart(stock_chart)
+                    stock_data = stock_chart.get_stock_data(clear_series=True, clear_lines=True)
+                    stock_data['new_object_contract'] = objects
+                    stock_chart.set_stock_data(stock_data)
+                    self._charts.append(stock_chart)
+                    self._auto_charts[key] = stock_chart
+                    with ui.dialog() as dialog, ui.card().classes('items-center'):
+                        ui.label('Are you sure you want to delete this chart?')
+                        with ui.row():
+                            ui.button('Yes', on_click=dialog_yes)
+                            ui.button('No', on_click=dialog_no)
+                    ui.button('Delete chart', on_click=dialog.open).classes("m-auto")
+                    ui.separator()
+                    chart_col.update()
+            charts_box.update()
+            return stock_chart

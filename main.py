@@ -1,5 +1,7 @@
-from bots_platform import ui, PlatformGui, ExchangeModel
 import argparse
+
+
+from bots_platform import ui, PlatformGui, ExchangeModel
 
 
 PROGRAM = 'Trading Bots Platform'

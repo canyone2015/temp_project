@@ -2,7 +2,7 @@ from nicegui import ui
 from typing import Union
 import asyncio
 
-from bots_platform.model import ExchangeModel
+from bots_platform.model.workers import BalanceWorker
 from bots_platform.gui.spaces import Columns
 
 
@@ -15,7 +15,7 @@ class BalanceSpace:
     UPDATE_QUIT_ROW = 'UPDATE_QUIT_ROW'
 
     def __init__(self):
-        self._exchange_model: Union[ExchangeModel, None] = None
+        self._balance_worker: Union[BalanceWorker, None] = None
         self._balance_space = None
         self._elements = dict()
         self._constructed = False
@@ -33,10 +33,10 @@ class BalanceSpace:
         if not self._constructed:
             return
         try:
-            notification = ui.notification(timeout=20, close_button=True)
+            notification = ui.notification(timeout=25, close_button=True)
             notification.message = 'Wait 30 seconds...'
             notification.spinner = True
-            await self._exchange_model.upgrade_unified_trade_account()
+            await self._balance_worker.upgrade_unified_trade_account()
             await asyncio.sleep(30)
             notification.message = 'Done!'
             notification.spinner = False
@@ -46,7 +46,20 @@ class BalanceSpace:
         except Exception as e:
             ui.notify(f'Upgrade unified trade account error: {e}', type='negative', close_button=True)
 
+    async def switch_margin_mode(self):
+        if not self._constructed:
+            return
+        try:
+            new_margin_mode = await self._balance_worker.switch_margin_mode()
+            ui.notify(f'Margin mode switched to \"{new_margin_mode}\"!',
+                      type='positive', close_button=True)
+        except Exception as e:
+            ui.notify(f'Margin mode switched error: {e}',
+                      type='negative', close_button=True)
+        await self.update()
+
     async def update(self):
+        self._delete_update_balance_timer()
         notification = ui.notification(timeout=8, close_button=True)
         notification.message = 'Fetching balance...'
         notification.spinner = True
@@ -54,32 +67,31 @@ class BalanceSpace:
         async def dialog_yes():
             nonlocal dialog
             dialog.close()
-            if self._constructed:
-                await self.quit()
+            if not self._constructed:
+                return
+            await self.quit()
 
         async def dialog_no():
             nonlocal dialog
             dialog.close()
 
-        async def switch_margin_mode():
+        async def update_balance_triggered(force=False):
             if not self._constructed:
                 return
+            self._constructed = False
             try:
-                new_margin_mode = await self._exchange_model.switch_margin_mode()
-                ui.notify(f'Margin mode switched to \"{new_margin_mode}\"!', type='positive', close_button=True)
-            except Exception as e:
-                ui.notify(f'Margin mode switched error: {e}', type='negative', close_button=True)
-            await update_balance_callback()
-
-        async def update_balance_callback():
-            if self._constructed:
-                self._delete_update_markets_timer()
+                self._delete_update_balance_timer()
+                if force:
+                    await self._balance_worker.force_update_balance_info(only_reset=True)
                 await self.update()
+            except:
+                pass
+            self._constructed = True
 
         with self._balance_space:
             balance: dict = dict()
             try:
-                balance = await self._exchange_model.fetch_balance()
+                balance = await self._balance_worker.fetch_balance_info()
             except:
                 pass
             margin_mode = 'isolated'
@@ -135,25 +147,26 @@ class BalanceSpace:
                                                                  'items-center justify-self-center')
                 self._elements[BalanceSpace.BALANCE_TABLE] = balance_table
 
-            if BalanceSpace.MARGIN_MODE_ROW in self._elements:
-                self._elements[BalanceSpace.MARGIN_MODE_ROW].clear()
-            else:
+            if BalanceSpace.MARGIN_MODE_ROW not in self._elements:
                 self._elements[BalanceSpace.MARGIN_MODE_ROW] = ui.row()
             margin_mode_row = self._elements[BalanceSpace.MARGIN_MODE_ROW]
+            margin_mode_row.clear()
             with margin_mode_row:
                 if 'cross' in margin_mode:
                     s = 'Cross Margin'
                 elif 'isolated' in margin_mode:
                     s = 'Isolated Margin'
-                else:
+                elif 'portfolio' in margin_mode:
                     s = 'Portfolio Margin'
+                else:
+                    s = 'Unknown Margin'
                 ui.label(s).classes("m-auto")
-                ui.button('switch', on_click=lambda *_: switch_margin_mode()).classes("m-auto")
+                ui.button('switch', on_click=lambda *_: self.switch_margin_mode()).classes("m-auto")
 
             if BalanceSpace.UPDATE_QUIT_ROW not in self._elements:
                 self._elements[BalanceSpace.UPDATE_QUIT_ROW] = update_quit_row = ui.row()
                 with update_quit_row:
-                    ui.button('Update', on_click=lambda *_: update_balance_callback()).classes("m-auto")
+                    ui.button('Update', on_click=lambda *_: update_balance_triggered(True)).classes("m-auto")
                     with ui.dialog() as dialog, ui.card().classes('items-center'):
                         ui.label('Are you sure you want to quit?')
                         with ui.row():
@@ -162,24 +175,24 @@ class BalanceSpace:
                     ui.button('Quit', on_click=dialog.open).classes("m-auto")
 
             self._elements[BalanceSpace.UPDATE_BALANCE_TIMER] = ui.timer(5.0,  # 5 seconds
-                                                                         callback=lambda *_: update_balance_callback(),
+                                                                         callback=lambda *_: update_balance_triggered(),
                                                                          once=True)
         notification.spinner = False
         notification.dismiss()
 
     def check(self):
-        if self._balance_space is None or self._exchange_model is None or self._quit_action is None:
+        if self._balance_space is None or self._balance_worker is None or self._quit_action is None:
             raise Exception(f'{type(self).__name__} is not initialized')
 
-    def set_exchange_model(self, model: ExchangeModel):
-        self._exchange_model = model
+    def set_balance_worker(self, balance_worker: BalanceWorker):
+        self._balance_worker = balance_worker
 
     def set_quit_action(self, quit_action: callable):
         self._quit_action = quit_action
 
     def detach(self):
         try:
-            self._delete_update_markets_timer()
+            self._delete_update_balance_timer()
             self._balance_space.delete()
         except:
             pass
@@ -191,7 +204,7 @@ class BalanceSpace:
         if self._quit_action:
             await self._quit_action()
 
-    def _delete_update_markets_timer(self):
+    def _delete_update_balance_timer(self):
         if BalanceSpace.UPDATE_BALANCE_TIMER in self._elements:
             try:
                 update_balance_timer = self._elements.pop(BalanceSpace.UPDATE_BALANCE_TIMER)

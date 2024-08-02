@@ -1,5 +1,6 @@
 from nicegui import ui
 from typing import Union
+from threading import Lock
 import asyncio
 
 from bots_platform.model import ExchangeModel
@@ -23,6 +24,7 @@ class LoginSpace:
         self._elements = dict()
         self._enter_user_space = None
         self._title = title
+        self._lock: Lock = Lock()
 
     async def init(self):
         self._elements.clear()
@@ -63,38 +65,41 @@ class LoginSpace:
         self._login_space = None
 
     async def connect(self):
-        self.check()
-        notification = ui.notification(timeout=8, close_button=True)
-        notification.message = 'Connecting...'
-        notification.spinner = True
+        with self._lock:
+            try:
+                self.check()
+            except:
+                return
+            notification = ui.notification(timeout=8, close_button=True)
+            notification.message = 'Connecting...'
+            notification.spinner = True
 
-        api_key = self._elements[LoginSpace.API_KEY_INPUT].value
-        api_secret = self._elements[LoginSpace.API_SECRET_INPUT].value
-        is_testnet = self._elements[LoginSpace.TESTNET_CHECKBOX].value
-        try:
-            await self._exchange_model.connect(
-                exchange='bybit',
-                api_key=api_key,
-                api_secret=api_secret,
-                is_testnet=is_testnet,
-            )
-            DefaultApiParameters.API_KEY = api_key
-            DefaultApiParameters.API_SECRET = api_secret
-            DefaultApiParameters.IS_TESTNET = is_testnet
-        except BaseException as e:
-            notification.message = f'{e}'
+            api_key = self._elements[LoginSpace.API_KEY_INPUT].value
+            api_secret = self._elements[LoginSpace.API_SECRET_INPUT].value
+            is_testnet = self._elements[LoginSpace.TESTNET_CHECKBOX].value
+            try:
+                await self._exchange_model.connect(
+                    exchange='bybit',
+                    api_key=api_key,
+                    api_secret=api_secret,
+                    is_testnet=is_testnet,
+                )
+                DefaultApiParameters.API_KEY = api_key
+                DefaultApiParameters.API_SECRET = api_secret
+                DefaultApiParameters.IS_TESTNET = is_testnet
+            except BaseException as e:
+                notification.message = f'{e}'
+                notification.spinner = False
+                notification.type = 'negative'
+                await asyncio.sleep(5)
+                notification.dismiss()
+                return
+
+            notification.message = 'The connection is established!'
             notification.spinner = False
-            notification.type = 'negative'
-            await asyncio.sleep(5)
+            notification.type = 'positive'
+
+            self.detach()
+
+            await self._enter_user_space()
             notification.dismiss()
-            return
-
-        notification.message = 'The connection is established!'
-        notification.spinner = False
-        notification.type = 'positive'
-
-        self.detach()
-
-        await self._enter_user_space()
-        await asyncio.sleep(3)
-        notification.dismiss()

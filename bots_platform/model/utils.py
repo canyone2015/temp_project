@@ -1,12 +1,15 @@
 from typing import Union
 from decimal import Decimal
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from math import ceil
+import random
 
 
 def decimal_number(number):
     if isinstance(number, (int, float, Decimal)):
         return Decimal(f'{number:g}')
+    if number is None:
+        return Decimal(0)
     return decimal_number(Decimal(number))
 
 
@@ -14,10 +17,11 @@ class TimeStamp:
     UTC_LOCAL_TIME_DIFFERENCE = int(datetime.now().astimezone(None).utcoffset().total_seconds())
 
     @staticmethod
-    def get_utc_dt_from_timestamp(timestamp):
-        if len(str(timestamp)) > 10:
-            timestamp /= 1000
-        return datetime.utcfromtimestamp(timestamp)
+    def normalize_timestamp(timestamp):
+        k = 1
+        if len(str(int(timestamp))) > 10:
+            k = 1000
+        return timestamp / k
 
     @staticmethod
     def convert_utc_to_local_dt(utc_dt):
@@ -28,18 +32,8 @@ class TimeStamp:
         return utc_dt.replace(tzinfo=None).astimezone(tz=timezone.utc)
 
     @staticmethod
-    def convert_utc_to_local_timestamp(utc_timestamp):
-        k = 1
-        if len(str(utc_timestamp)) > 10:
-            k = 1000
-        return utc_timestamp + TimeStamp.UTC_LOCAL_TIME_DIFFERENCE * k
-
-    @staticmethod
-    def convert_local_to_utc_timestamp(local_timestamp):
-        k = 1
-        if len(str(local_timestamp)) > 10:
-            k = 1000
-        return local_timestamp - TimeStamp.UTC_LOCAL_TIME_DIFFERENCE * k
+    def get_utc_dt_from_timestamp(timestamp):
+        return datetime.utcfromtimestamp(TimeStamp.normalize_timestamp(timestamp))
 
     @staticmethod
     def get_local_dt_from_timestamp(timestamp):
@@ -54,28 +48,51 @@ class TimeStamp:
         return datetime.now(tz=timezone.utc)
 
     @staticmethod
-    def format_datetime(dt):
-        return dt.strftime('%Y-%m-%d %H:%M:%S')
+    def format_datetime(dt, *, pattern='%Y-%m-%d %H:%M:%S'):
+        return dt.strftime(pattern)
 
     @staticmethod
-    def format_date(dt):
-        return dt.strftime('%Y-%m-%d')
+    def timedelta(*,
+                  weeks=0,
+                  days=0,
+                  hours=0,
+                  minutes=0,
+                  seconds=0):
+        return timedelta(weeks=weeks, days=days, hours=hours, minutes=minutes, seconds=seconds)
 
     @staticmethod
-    def format_time(dt):
-        return dt.strftime('%H:%M:%S')
+    def format_date(dt, *, pattern='%Y-%m-%d'):
+        return dt.strftime(pattern)
 
     @staticmethod
-    def parse_datetime(string, utc=True):
-        return datetime.strptime(string, '%Y-%m-%d %H:%M:%S').astimezone(timezone.utc if utc else None)
+    def format_time(dt, *, pattern='%H:%M:%S'):
+        return dt.strftime(pattern)
 
     @staticmethod
-    def parse_date(string, utc=True):
-        return datetime.strptime(string, '%Y-%m-%d').astimezone(timezone.utc if utc else None)
+    def parse_datetime(string, *, utc=True, pattern='%Y-%m-%d %H:%M:%S'):
+        return datetime.strptime(string, pattern).astimezone(timezone.utc if utc else None)
 
     @staticmethod
-    def parse_time(string, utc=True):
-        return datetime.strptime(string, '%H:%M:%S').astimezone(timezone.utc if utc else None)
+    def parse_date(string, *, utc=True, pattern='%Y-%m-%d'):
+        return datetime.strptime(string, pattern).astimezone(timezone.utc if utc else None)
+
+    @staticmethod
+    def parse_time(string, *, utc=True, pattern='%H:%M:%S'):
+        return datetime.strptime(string, pattern).astimezone(timezone.utc if utc else None)
+
+    @staticmethod
+    def convert_utc_to_local_timestamp(utc_timestamp):
+        k = 1
+        if len(str(int(utc_timestamp))) > 10:
+            k = 1000
+        return utc_timestamp + TimeStamp.UTC_LOCAL_TIME_DIFFERENCE * k
+
+    @staticmethod
+    def convert_local_to_utc_timestamp(local_timestamp):
+        k = 1
+        if len(str(int(local_timestamp))) > 10:
+            k = 1000
+        return local_timestamp - TimeStamp.UTC_LOCAL_TIME_DIFFERENCE * k
 
     @staticmethod
     def convert_timeframe_to_seconds(tf):
@@ -89,11 +106,145 @@ class TimeStamp:
 
     @staticmethod
     def get_number_of_candles(tf, date_from_timestamp, date_to_timestamp):
-        if len(str(date_from_timestamp)) > 10 or len(str(date_to_timestamp)) > 10:
-            date_from_timestamp /= 1000
-            date_to_timestamp /= 1000
+        date_from_timestamp = TimeStamp.normalize_timestamp(date_from_timestamp)
+        date_to_timestamp = TimeStamp.normalize_timestamp(date_to_timestamp)
         r = ceil((date_to_timestamp - date_from_timestamp) / TimeStamp.convert_timeframe_to_seconds(tf))
         return r
+
+    @staticmethod
+    def get_timestamps_range(date_from_timestamp: Union[int, float, ..., None],
+                             date_to_timestamp: Union[int, float, ..., None],
+                             *,
+                             utc: bool = True):
+        b11, b12 = date_from_timestamp is None, date_to_timestamp is None
+        b21, b22 = date_from_timestamp is ..., date_to_timestamp is ...
+
+        if not b11 and not b21:
+            date_from_timestamp = TimeStamp.normalize_timestamp(date_from_timestamp)
+            if not utc:  # convert to utc
+                date_from_timestamp = TimeStamp.convert_local_to_utc_timestamp(date_from_timestamp)
+
+        if not b12 and not b22:
+            date_to_timestamp = TimeStamp.normalize_timestamp(date_to_timestamp)
+            if not utc:  # convert to utc
+                date_to_timestamp = TimeStamp.convert_local_to_utc_timestamp(date_to_timestamp)
+
+        current_timestamp = int(TimeStamp.get_utc_dt_from_now().timestamp())
+        one_day = timedelta(days=1).total_seconds()
+
+        if b11 and b12:  # [None, None]
+            date_from_timestamp = current_timestamp
+            date_to_timestamp = current_timestamp
+        elif b11:  # [None, ?]
+            if b22:  # [None, ...]
+                date_to_timestamp = current_timestamp
+            date_from_timestamp = date_to_timestamp - one_day
+        elif b12:  # [?, None]
+            if b21:  # [..., None]
+                date_from_timestamp = current_timestamp
+            date_to_timestamp = date_from_timestamp + one_day
+        else:
+            if b21:
+                date_from_timestamp = current_timestamp
+            if b22:
+                date_to_timestamp = current_timestamp
+        if date_from_timestamp > date_to_timestamp:
+            date_from_timestamp, date_to_timestamp = date_to_timestamp, date_from_timestamp
+        if not utc:
+            date_from_timestamp = TimeStamp.convert_utc_to_local_timestamp(date_from_timestamp)
+            date_to_timestamp = TimeStamp.convert_utc_to_local_timestamp(date_to_timestamp)
+        return date_from_timestamp, date_to_timestamp
+
+
+class ArithOHLCVList:
+    def __init__(self, lst=None):
+        self._list = list() if lst is None else list(lst)
+
+    def __op(self, other, op_func):
+
+        def op(arg1, arg2):
+            try:
+                return op_func(arg1, arg2)
+            except:
+                return 0
+
+        if isinstance(other, ArithOHLCVList):
+            other = other._list
+        if isinstance(other, list):
+            this = self._list
+            r = []
+            s1, s2 = 0, 0
+            while s1 < len(this) and s2 < len(other):
+                if this[s1][0] < other[s2][0]:
+                    s1 += 1
+                elif this[s1][0] > other[s2][0]:
+                    s2 += 1
+                else:
+                    r.append([
+                        this[s1][0],
+                        op(this[s1][1], other[s2][1]),
+                        op(this[s1][2], other[s2][2]),
+                        op(this[s1][3], other[s2][3]),
+                        op(this[s1][4], other[s2][4]),
+                        op(this[s1][5], other[s2][5]),
+                    ])
+                    s1 += 1
+                    s2 += 1
+            return ArithOHLCVList(r)
+        else:
+            return ArithOHLCVList([
+                [x[0],  # timestamp
+                 op(x[1], other),  # open
+                 op(x[2], other),  # high
+                 op(x[3], other),  # low
+                 op(x[4], other),  # close
+                 op(x[5], other),  # volume
+                 ] for x in self._list])
+
+    def __add__(self, other):
+        return self.__op(other, lambda x, y: x + y)
+
+    def __sub__(self, other):
+        return self.__op(other, lambda x, y: x - y)
+
+    def __mul__(self, other):
+        return self.__op(other, lambda x, y: x * y)
+
+    def __truediv__(self, other):
+        return self.__op(other, lambda x, y: x / (y or decimal_number(1e-9)))
+
+    def __floordiv__(self, other):
+        return self.__op(other, lambda x, y: x // (y or decimal_number(1e-9)))
+
+    def __mod__(self, other):
+        return self.__op(other, lambda x, y: x % (y or decimal_number(1e-9)))
+
+    def __pow__(self, other):
+        return self.__op(other, lambda x, y: x ** y)
+
+    def __radd__(self, other):
+        return self.__op(other, lambda x, y: y + x)
+
+    def __rsub__(self, other):
+        return self.__op(other, lambda x, y: y - x)
+
+    def __rmul__(self, other):
+        return self.__op(other, lambda x, y: y * x)
+
+    def __rtruediv__(self, other):
+        return self.__op(other, lambda x, y: y / (x or decimal_number(1e-9)))
+
+    def __rfloordiv__(self, other):
+        return self.__op(other, lambda x, y: y // (x or decimal_number(1e-9)))
+
+    def __rmod__(self, other):
+        return self.__op(other, lambda x, y: y % (x or decimal_number(1e-9)))
+
+    def __rpow__(self, other):
+        return self.__op(other, lambda x, y: y ** x)
+
+    def list(self):
+        return list(self._list)
 
 
 quote_coins = frozenset({
@@ -211,3 +362,48 @@ def format_si_number(number: Union[int, float, Decimal], *,
             number /= value
             return number, symbol
     return number, ''
+
+
+def make_brownian_motion(*,
+                         date_from_ts,
+                         timeframe,
+                         count,
+                         mu=0.,
+                         sigma=1.):
+    timeframe_seconds = int(TimeStamp.convert_timeframe_to_seconds(timeframe))
+    if count <= 1:
+        return []
+    m = 60 if count < 10000 else 6
+    n_points = m * (count - 1)
+    interval = [0, 10]
+    dt = (interval[1] - interval[0]) / (n_points - 1)
+    z = [[random.normalvariate(mu, sigma) for _ in range(n_points)] for _ in range(2)]
+    w = [[0 for _ in range(n_points)] for _ in range(2)]
+    for idx in range(len(w[0]) - 1):
+        real_idx = idx + 1
+        for i in range(len(w)):
+            w[i][real_idx] = w[i][real_idx - 1] + (dt ** 0.5) * z[i][idx]
+    min_value = abs(min(w[i][j] for i in range(len(w)) for j in range(len(w[i])))) + 1
+    for i in range(len(w)):
+        for j in range(len(w[i])):
+            w[i][j] += min_value
+    timestamp = int(date_from_ts)
+    tohlcv = []
+    for j in range(0, len(w[0]), m):
+        ohlc_numbers = w[0][j:j + m]
+        volume_numbers = w[1][j:j + m]
+        open = ohlc_numbers[0] if not tohlcv else tohlcv[-1][4]
+        high = max(ohlc_numbers)
+        low = min(ohlc_numbers)
+        close = ohlc_numbers[-1]
+        volume = sum(volume_numbers)
+        tohlcv.append([
+            timestamp,
+            open,
+            high,
+            low,
+            close,
+            volume
+        ])
+        timestamp += timeframe_seconds * 1000
+    return tohlcv

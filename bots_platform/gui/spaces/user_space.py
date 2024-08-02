@@ -40,10 +40,16 @@ class UserSpace:
                 charts_tab = ui.tab('Charts')
                 log_tab = ui.tab('Log')
             with ui.tab_panels(tabs, value=balance_tab).classes('items-center'):
+                balance_space = None
+                markets_space = None
+                trading_space = None
+                trading_bots_space = None
+                charts_space = None
+                log_space = None
                 with ui.tab_panel(balance_tab):
                     try:
                         self._elements[UserSpace.BALANCE_SPACE] = balance_space = BalanceSpace()
-                        balance_space.set_exchange_model(self._exchange_model)
+                        balance_space.set_balance_worker(self._exchange_model.get_balance_worker())
                         balance_space.set_quit_action(self.quit)
                         self._elements[UserSpace.BALANCE_TIMER] = ui.timer(0.0,
                                                                            callback=lambda: balance_space.init(),
@@ -53,7 +59,7 @@ class UserSpace:
                 with ui.tab_panel(markets_tab):
                     try:
                         self._elements[UserSpace.MARKETS_SPACE] = markets_space = MarketsSpace()
-                        markets_space.set_exchange_model(self._exchange_model)
+                        markets_space.set_markets_worker(self._exchange_model.get_markets_worker())
                         self._elements[UserSpace.MARKETS_TIMER] = ui.timer(0.0,
                                                                            callback=lambda: markets_space.init(),
                                                                            once=True)
@@ -62,7 +68,7 @@ class UserSpace:
                 with ui.tab_panel(trading_tab):
                     try:
                         self._elements[UserSpace.TRADING_SPACE] = trading_space = TradingSpace()
-                        trading_space.set_exchange_model(self._exchange_model)
+                        trading_space.set_trading_worker(self._exchange_model.get_trading_worker())
                         self._elements[UserSpace.TRADING_TIMER] = ui.timer(0.0,
                                                                            callback=lambda: trading_space.init(),
                                                                            once=True)
@@ -71,7 +77,7 @@ class UserSpace:
                 with ui.tab_panel(trading_bots_tab):
                     try:
                         self._elements[UserSpace.TRADING_BOTS_SPACE] = trading_bots_space = TradingBotsSpace()
-                        trading_bots_space.set_exchange_model(self._exchange_model)
+                        trading_bots_space.set_trading_bots_worker(self._exchange_model.get_trading_bots_worker())
                         self._elements[UserSpace.TRADING_BOTS_TIMER] = ui.timer(0.0,
                                                                                 callback=lambda: trading_bots_space.init(),
                                                                                 once=True)
@@ -80,11 +86,9 @@ class UserSpace:
                 with ui.tab_panel(charts_tab):
                     try:
                         self._elements[UserSpace.CHARTS_SPACE] = charts_space = ChartsSpace()
-                        try:
+                        charts_space.set_charts_worker(self._exchange_model.get_charts_worker())
+                        if trading_space:
                             trading_space.set_charts_space(charts_space)
-                        except:
-                            pass
-                        charts_space.set_exchange_model(self._exchange_model)
                         self._elements[UserSpace.CHARTS_TIMER] = ui.timer(0.0,
                                                                           callback=lambda: charts_space.init(),
                                                                           once=True)
@@ -93,7 +97,7 @@ class UserSpace:
                 with ui.tab_panel(log_tab):
                     try:
                         self._elements[UserSpace.LOG_SPACE] = log_space = LogSpace()
-                        log_space.set_logger(self._exchange_model.logger)
+                        log_space.set_logger(self._exchange_model.get_logger())
                         self._elements[UserSpace.LOG_TIMER] = ui.timer(0.0,
                                                                        callback=lambda: log_space.init(),
                                                                        once=True)

@@ -35,7 +35,8 @@ class LogSpace:
         self._log_space.push(line)
 
     def detach(self):
-        self._logger.disconnect(self.log_data)
+        if self._logger:
+            self._logger.disconnect(self.log_data)
         try:
             self._log_space.delete()
         except:

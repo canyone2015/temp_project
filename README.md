@@ -9,6 +9,7 @@ Plan:
 - [x] [Trading] Closed orders
 - [x] [Trading] Canceled orders
 - [x] [Trading] Transactions
+- [ ] [Trading] Charts
 - [ ] [Bots] Real mode
 - [ ] [Bots] Backtesting
 - [ ] [Bots] Trend Bot
@@ -19,6 +20,8 @@ Plan:
 - [ ] [Bots] DCA Bot
 
 <hr>
+
+Python 3.11+
 
 Run:
 ```commandline

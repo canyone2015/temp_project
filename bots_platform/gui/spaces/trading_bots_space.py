@@ -1,12 +1,12 @@
 from nicegui import ui
 from typing import Union
 
-from bots_platform.model import ExchangeModel
+from bots_platform.model.workers import TradingBotsWorker
 
 
 class TradingBotsSpace:
     def __init__(self):
-        self._exchange_model: Union[ExchangeModel, None] = None
+        self._trading_bots_worker: Union[TradingBotsWorker, None] = None
         self._trading_bots_space = None
         self._elements = dict()
         self._constructed = False
@@ -45,11 +45,11 @@ class TradingBotsSpace:
         notification.dismiss()
 
     def check(self):
-        if self._trading_bots_space is None or self._exchange_model is None:
+        if self._trading_bots_space is None or self._trading_bots_worker is None:
             raise Exception(f'{type(self).__name__} is not initialized')
 
-    def set_exchange_model(self, model: ExchangeModel):
-        self._exchange_model = model
+    def set_trading_bots_worker(self, trading_bots_worker: TradingBotsWorker):
+        self._trading_bots_worker = trading_bots_worker
 
     def detach(self):
         try:
