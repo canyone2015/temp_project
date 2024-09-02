@@ -26,151 +26,133 @@ class ChartUiData:
             'price_type': '',
             'real_date_from': '',
         },
-        'rangeSelector': {
-            'buttons': [
-                {
-                    'type': 'minute',
-                    'count': 30,
-                    'text': '30m'
+        'baseTheme': 'dark',
+        'price_precision': 6,
+        'volume_precision': 6,
+        'data': [],
+        'styles': {
+            'crosshair': {
+                'show': True,
+                'horizontal': {
+                    'text': {
+                        'size': 14,
+                    }
                 },
-                {
-                    'type': 'hour',
-                    'count': 1,
-                    'text': '1h'
+                'vertical': {
+                    'text': {
+                        'size': 14,
+                    }
                 },
-                {
-                    'type': 'hour',
-                    'count': 4,
-                    'text': '4h'
-                },
-                {
-                    'type': 'hour',
-                    'count': 12,
-                    'text': '12h'
-                },
-                {
-                    'type': 'day',
-                    'count': 1,
-                    'text': '1d'
-                },
-                {
-                    'type': 'week',
-                    'count': 1,
-                    'text': '1w'
-                },
-                {
-                    'type': 'month',
-                    'count': 1,
-                    'text': '1M'
-                },
-                {
-                    'type': 'year',
-                    'count': 1,
-                    'text': '1y'
-                },
-                {
-                    'type': 'all',
-                    'text': 'All'
+            },
+            'xAxis': {
+                'tickText': {
+                    'size': 14,
                 }
-            ]
-        },
-        'title': {
-            'text': 'Price'
-        },
-        'xAxis': {
-            'plotLines': [],
-            'dataGrouping': {
-                'units': [
-                    ['minute', [1, 3, 5, 15, 30]],
-                    ['hour', [1, 2, 4, 6, 12]],
-                    ['day', [1]],
-                    ['week', [1]],
-                    ['month', [1]],
-                    ['year', [1]],
-                ],
             },
-        },
-        'yAxis': [
-            {
-                'height': '80%',
-                'plotLines': [],
-                'crosshair': {
-                    'snap': False,
-                    'label': {
-                        'enabled': True
+            'yAxis': {
+                'position': 'right',
+                'inside': False,
+                'type': 'normal',
+                'tickText': {
+                    'size': 14,
+                }
+            },
+            'priceMark': {
+                'tickText': {
+                    'size': 14,
+                }
+            },
+            'candle': {
+                'type': 'candle_solid',
+                'tooltip': {
+                    'showRule': 'follow_cross',
+                    'custom': [
+                        {'title': 'Time: ', 'value': '{time}'},
+                        {'title': 'Open: ', 'value': '{open}'},
+                        {'title': 'High: ', 'value': '{high}'},
+                        {'title': 'Low: ', 'value': '{low}'},
+                        {'title': 'Close: ', 'value': '{close}'},
+                        {'title': 'Volume: ', 'value': '{volume}'}
+                    ],
+                    'text': {
+                        'size': 16,
+                        'color': '#D9D9D9'
                     }
                 },
+                'priceMark': {
+                    'high': {
+                        'textSize': 14,
+                    },
+                    'low': {
+                        'textSize': 14,
+                    },
+                    'last': {
+                        'text': {
+                            'size': 14,
+                        }
+                    }
+                }
             },
-            {
-                'top': '80%',
-                'height': '20%',
-                'offset': 0,
-                'plotLines': [],
-                'crosshair': {
-                    'snap': False,
-                    'label': {
-                        'enabled': True
+            'indicator': {
+                'tooltip': {
+                    'showRule': 'follow_cross',
+                    'text': {
+                        'size': 14,
                     }
                 },
+                'lastValueMark': {
+                    'show': True,
+                    'text': {
+                        'size': 14,
+                    }
+                }
+            },
+            'overlay': {
+                'text': {
+                    'size': 14
+                },
+                'rectText': {
+                    'size': 14
+                }
             }
-        ],
-        'series': [
-            {
-                'id': 'ohlc',
-                'type': 'candlestick',
-                'name': 'OHLC',
-                'data': [],
-                'yAxis': 0,
-                'groupPadding': 0.18,
-                'pointPadding': 0.1,
-            },
-            {
-                'id': 'volume',
-                'type': 'column',
-                'name': 'Volume',
-                'data': [],
-                'yAxis': 1,
-                'groupPadding': 0.18,
-                'pointPadding': 0.1,
-            },
-        ],
-        'plotOptions': {
-            'candlestick': {
-                'color': '#F23645',
-                'lineColor': '#F23645',
-                'upColor': '#089981',
-                'upLineColor': '#089981',
-            },
-            'ohlc': {
-                'color': '#F23645',
-                'lineColor': '#F23645',
-                'upColor': '#089981',
-                'upLineColor': '#089981',
-                'lineWidth': '3',
-            },
-        }
+        },
+        'timezone': 'Europe/Istanbul',
+        'locale': 'en',
     }
 
     @staticmethod
     def make_marker(*,
-                    target: Union[Literal['ohlc', 'volume'], int],
-                    marker_id: str,
-                    marker_name: str,
-                    data: list,
-                    marker_type: str = 'line',
-                    color='#68b8ee',
-                    radius=1):
+                    timestamp,
+                    value,
+                    label_text: str,
+                    label_color: str = '#68b8ee',
+                    label_background_color: str = '#121212'):
         return {
-            'id': marker_id,
-            'type': marker_type,
-            'name': marker_name,
-            'data': data,
-            'yAxis': target if isinstance(target, int) else (0 if target == 'ohlc' else 1),
-            'marker': {
-                'enabled': radius > 0,
-                'radius': max(radius, 0),
-                'fillColor': color
-            }
+            'currentStep': -1,
+            'points': [
+                {
+                    'timestamp': timestamp,
+                    'value': value,
+                },
+            ],
+            'styles': {
+                'point': {
+                    'radius': 0,
+                },
+                'line': {
+                    'color': label_background_color,
+                    'size': 2,
+                },
+                'text': {
+                    'color': label_color,
+                    'backgroundColor': label_background_color,
+                },
+            },
+            'extendData': {'text': label_text},
+            'name': 'marker',
+            'lock': True,
+            'visible': True,
+            'paneId': 'candle_pane'
         }
 
     @staticmethod
@@ -178,19 +160,33 @@ class ChartUiData:
                   value: Union[int, float, Decimal],
                   label_text: str,
                   label_color: str = '#F0F0F3',
-                  label_align: str = 'left',
+                  label_background_color: str = '#121212',
                   line_color: str = '#F0F0F3',
-                  line_width: int = 1):
+                  line_width: int = 1,
+                  align: str = 'right'):
         return {
-            'value': value,
-            'color': line_color,
-            'width': line_width,
-            'label': {
-                'text': label_text,
-                'style': {
-                    'color': label_color,
-                    'fontWeight': 'bold',
+            'currentStep': -1,
+            'points': [
+                {
+                    'value': value,
                 },
-                'align': label_align,
+            ],
+            'styles': {
+                'point': {
+                    'radius': 0,
+                },
+                'line': {
+                    'color': line_color,
+                    'size': line_width,
+                },
+                'text': {
+                    'color': label_color,
+                    'backgroundColor': label_background_color,
+                },
             },
+            'extendData': {'text': label_text, 'align': align},
+            'name': 'price_line',
+            'lock': True,
+            'visible': True,
+            'paneId': 'candle_pane'
         }

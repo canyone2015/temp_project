@@ -163,6 +163,5 @@ class MarketsSpace:
             try:
                 update_markets_timer = self._elements.pop(MarketsSpace.UPDATE_MARKETS_TIMER)
                 update_markets_timer.cancel()
-                update_markets_timer.delete()
             except:
                 pass

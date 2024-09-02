@@ -112,6 +112,14 @@ class TimeStamp:
         return r
 
     @staticmethod
+    def adjust_timeframe(*, timeframes, candles, date_from_timestamp, date_to_timestamp):
+        timeframes = {timeframe: TimeStamp.convert_timeframe_to_seconds(timeframe) for timeframe in timeframes}
+        for tf_str, tf_seconds in sorted(timeframes.items(), key=lambda x: x[1]):
+            if TimeStamp.get_number_of_candles(tf_str, date_from_timestamp, date_to_timestamp) <= candles:
+                return tf_str
+        return min(timeframes, key=lambda x: x[1])[0]
+
+    @staticmethod
     def get_timestamps_range(date_from_timestamp: Union[int, float, ..., None],
                              date_to_timestamp: Union[int, float, ..., None],
                              *,

@@ -1,36 +1,46 @@
-from typing import Union, Literal
+from typing import Union
 from copy import deepcopy
+import inspect
 import traceback
-import json
-import os
 
 from nicegui import ui
 from bots_platform.gui.chart import ChartUiData
+from bots_platform.gui.chart.klinechart import KLineChart
 from bots_platform.model.utils import TimeStamp, get_trading_view_url, get_exchange_trade_url
 
 
 class StockChartUiComponent:
-    OHLC_SERIES = 'ohlc'
-    VOLUME_SERIES = 'volume'
-
     def __init__(self):
         self._is_custom = True
         self._theme = None
         self._contracts = set()
         self._timeframes = []
         self._price_types = []
-        self._chart_types = ['candlestick', 'ohlc']
+        self._chart_types = [
+            'candle_solid',
+            'candle_stroke',
+            'candle_up_stroke',
+            'candle_down_stroke',
+            'ohlc',
+            'area'
+        ]
         self._update_chart_callback = lambda *_, **__: None
+        self._duplicate_chart_callback = lambda *_, **__: None
+        self._delete_chart_callback = lambda *_, **__: None
         self.__new_object_contract = {
-            'target': ['ohlc', 'volume', 'x'],
-            'visual-type': ['marker', 'line', 'marker-and-line', 'box'],
-            'object-type': ['entry-price', 'current-price', 'open-order', 'close-order', 'closed-order',
-                            'take-profit', 'stop-loss', 'trailing-stop', 'liquidation-price', 'other'],
+            'type': ['overlay'],
+            'overlay-type': {'marker', 'line', 'marker-and-line'},
+            'overlay-hint': {'entry-price', 'current-price', 'open-order', 'close-order', 'closed-order',
+                             'take-profit', 'stop-loss', 'trailing-stop', 'liquidation-price', 'other'},
             'marker-label': '',
             'line-label': '',
-            'values': [],
-            'marker-color': '',
+            'marker-label-color': '',
+            'marker-background-color': '',
             'line-color': '',
+            'line-label-color': '',
+            'line-label-background-color': '',
+            'line-width': '',
+            'values': [],
         }
         self._complex = False
 
@@ -42,6 +52,7 @@ class StockChartUiComponent:
         self._price_type_select = None
         self._chart_type_select = None
         self._fetch_button = None
+        self._chart_caption_label = None
         self._chart = None
 
     def create(self, *,
@@ -50,22 +61,21 @@ class StockChartUiComponent:
                date_to_str: str = '',
                timeframe: str = '1m',
                price_type: str = 'OHLCV',
-               chart_type: Literal['candlestick', 'ohlc'] = 'candlestick',
+               chart_type: str = 'candle_solid',
                chart_style: str = '',
-               complex: bool = False,
-               theme_path: Union[str, None] = None):
+               complex: bool = False):
 
         def trading_view_triggered(*_):
             v = self._contract_input.value
             if v in self._contracts:
-                ui.navigate().to(get_trading_view_url(v), new_tab=True)
+                ui.navigate.to(get_trading_view_url(v), new_tab=True)
             else:
                 ui.notify('Market contract not found!', close_button=True, type='warning')
 
         def exchange_triggered(*_):
             v = self._contract_input.value
             if v in self._contracts:
-                ui.navigate().to(get_exchange_trade_url(v), new_tab=True)
+                ui.navigate.to(get_exchange_trade_url(v), new_tab=True)
             else:
                 ui.notify('Market contract not found!', close_button=True, type='warning')
 
@@ -86,9 +96,9 @@ class StockChartUiComponent:
                 return 'Invalid date'
 
         def chart_type_changed():
-            chart_type = self._chart_type_select.value
+            chart_type = self._chart_type_select.value.replace(' ', '_')
             if chart_type in self._chart_types:
-                self._chart.options['series'][0]['type'] = chart_type
+                self._chart.options['styles']['candle']['type'] = chart_type
                 self._chart.update()
 
         def create_date_input(string, default_value):
@@ -102,11 +112,17 @@ class StockChartUiComponent:
                 date_input.set_value(default_value)
             return date_input
 
-        if chart_type not in self._chart_types:
-            chart_type = 'candlestick'
+        def set_mode(value):
+            nonlocal mode, mode_button
+            mode = value
+            mode_button.set_text(f"Mode [{mode.replace('_', ' ').capitalize()}]")
 
+        mode = ''
         self._complex = complex
         in_row_style = 'margin: auto auto;'
+        caption_style = 'font-size: 18px;'
+        if chart_type not in self._chart_types:
+            chart_type = 'candle_solid'
 
         with ui.column().classes('w-full items-center') as self._chart_box:
             with ui.row():
@@ -127,16 +143,61 @@ class StockChartUiComponent:
                                                     value=price_type)
                 self._fetch_button = ui.button('Fetch',
                                                on_click=lambda *_: self._update_chart_callback()).style(in_row_style)
-                self._chart_type_select = ui.select(options=self._chart_types,
-                                                    value=chart_type,
+                self._chart_type_select = ui.select(options=[x.replace('_', ' ') for x in self._chart_types],
+                                                    value=chart_type.replace('_', ' '),
                                                     on_change=lambda *_: chart_type_changed())
-            self._chart = ui.highchart(
-                options=deepcopy(ChartUiData.STOCK_CHART),
-                type='stockChart',
-                extras=['stock', 'accessibility']
-            ).style(chart_style)
-            self._load_theme(theme_path)
-            self._apply_theme(self._chart.options)
+                caption = (contract or 'Chart') + f' {price_type}'
+            self._chart_caption_label = ui.label(caption).style(caption_style).style(in_row_style)
+            self._chart = KLineChart(options=deepcopy(ChartUiData.STOCK_CHART)).style(chart_style)
+            with ui.row():
+                with ui.card(align_items='center').style(in_row_style), ui.row():
+                    ui.label('Overlay').style(in_row_style)
+                    with ui.dropdown_button('', auto_close=True, color='dark').style(in_row_style) as mode_button:
+                        set_mode('normal')
+                        items = [
+                            ('Normal', lambda *_: set_mode('normal')),
+                            ('Weak Magnet', lambda *_: set_mode('weak_magnet')),
+                            ('Strong Magnet', lambda *_: set_mode('strong_magnet')),
+                        ]
+                        for title, on_click in items:
+                            ui.item(title, on_click=on_click).style('text-align:center;')
+                    with ui.dropdown_button('Add', auto_close=True, color='dark').style(in_row_style):
+                        items = [
+                            ('Lines', lambda *_:
+                            self._chart.add_overlay({'name': 'lines', 'mode': mode},
+                                                    KLineChart.DRAWINGS_GROUP)),
+                            ('% change', lambda *_:
+                            self._chart.add_overlay({'name': 'percentage_change', 'mode': mode},
+                                                    KLineChart.DRAWINGS_GROUP)),
+                            ('↑↓%', lambda *_:
+                            self._chart.add_overlay({'name': 'buildup_drawdown', 'mode': mode},
+                                                    KLineChart.DRAWINGS_GROUP)),
+                            ('↑↓% max', lambda *_:
+                            self._chart.add_overlay({'name': 'buildup_drawdown_max', 'mode': mode},
+                                                    KLineChart.DRAWINGS_GROUP)),
+                            ('Risk:Reward', lambda *_:
+                            self._chart.add_overlay({'name': 'risk_reward', 'mode': mode},
+                                                    KLineChart.DRAWINGS_GROUP)),
+                            ('Volume Profile', lambda *_:
+                            self._chart.add_overlay({'name': 'volume_profile', 'mode': mode},
+                                                    KLineChart.DRAWINGS_GROUP))
+                        ]
+                        for title, on_click in items:
+                            ui.item(title, on_click=on_click).style('text-align:center;')
+                    ui.button('Clear',
+                              on_click=lambda *_: self._chart.remove_overlay(KLineChart.DRAWINGS_GROUP),
+                              color='dark').style(in_row_style)
+                with ui.card(align_items='center').style(in_row_style), ui.row():
+                    ui.label('Chart').style(in_row_style)
+                    ui.button('Update view',
+                              on_click=lambda *_: self._chart.update(),
+                              color='dark').style(in_row_style)
+                    ui.button('Duplicate',
+                              on_click=lambda *_: self._duplicate_chart_callback(),
+                              color='dark').style(in_row_style)
+                    ui.button('Delete',
+                              on_click=lambda *_: self._delete_chart_callback(),
+                              color='dark').style(in_row_style)
             self.set_custom_mode(self._is_custom)
             self._chart.update()
         return self._chart_box, self._chart
@@ -149,6 +210,7 @@ class StockChartUiComponent:
         b = b and self._timeframe_select is not None
         b = b and self._price_type_select is not None
         b = b and self._chart_type_select is not None
+        b = b and self._chart_caption_label is not None
         b = b and self._chart is not None
         if not b:
             raise Exception('Some of chart elements are not set')
@@ -163,6 +225,7 @@ class StockChartUiComponent:
         self._price_type_select.update()
         self._chart_type_select.update()
         self._fetch_button.update()
+        self._chart_caption_label.update()
         self._chart.update()
 
     def is_custom(self):
@@ -227,18 +290,40 @@ class StockChartUiComponent:
     def set_update_chart_callback(self, func: callable):
 
         async def callback(*_, **__):
-            return await func(self)
+            r = func(self)
+            b = inspect.isawaitable(r)
+            if b:
+                return await r
+            return r
 
         self._update_chart_callback = callback
 
-    def get_series(self, series_id: str):
-        self.check()
-        return next((x for x in self._chart.options['series'] if x['id'] == series_id), None)
+    def set_duplicate_chart_callback(self, func: callable):
 
-    def get_stock_data(self, *, clear_series=False, clear_lines=False) -> dict:
+        async def callback(*_, **__):
+            r = func(self)
+            b = inspect.isawaitable(r)
+            if b:
+                return await r
+            return r
+
+        self._duplicate_chart_callback = callback
+
+    def set_delete_chart_callback(self, func: callable):
+
+        async def callback(*_, **__):
+            r = func(self)
+            b = inspect.isawaitable(r)
+            if b:
+                return await r
+            return r
+
+        self._delete_chart_callback = callback
+
+    def get_stock_data(self) -> dict:
         self.check()
         stock_data = dict()
-        stock_data['title'] = self._chart.options['title']['text']
+        stock_data['title'] = self._chart_caption_label.text
         contract = self.get_contract()
         if not self._complex and contract not in self._contracts:
             contract = ''
@@ -250,16 +335,7 @@ class StockChartUiComponent:
             'price_type': self.get_price_type(),
         }
         stock_data['parameters'] = self._chart.options['parameters']
-        stock_data['ohlc'] = self.get_series(StockChartUiComponent.OHLC_SERIES)['data']
-        stock_data['volume'] = self.get_series(StockChartUiComponent.VOLUME_SERIES)['data']
-        stock_data['other_series'] = [
-            x for x in self._chart.options['series'] if x['id'] not in [
-                StockChartUiComponent.OHLC_SERIES, StockChartUiComponent.VOLUME_SERIES
-            ]
-        ] if not clear_series else []
-        stock_data['x_lines'] = self._chart.options['xAxis']['plotLines'] if not clear_lines else []
-        stock_data['ohlc_lines'] = self._chart.options['yAxis'][0]['plotLines'] if not clear_lines else []
-        stock_data['volume_lines'] = self._chart.options['yAxis'][1]['plotLines'] if not clear_lines else []
+        stock_data['data'] = self._chart.options['data']
         stock_data['new_object_contract'] = deepcopy(self.__new_object_contract)
         return stock_data
 
@@ -288,46 +364,114 @@ class StockChartUiComponent:
         if self._price_type_select:
             self._price_type_select.set_value(value)
 
-    def _get_object_type_color_width(self, *,
-                                     object_type,
-                                     default_color,
-                                     force_color):
-        color = default_color
-        width = 1
-        if object_type == 'current-price':
-            color = ChartUiData.BLUE_COLOR
-            width = 3
-        elif object_type == 'entry-price':
-            color = ChartUiData.WHITE_COLOR
-            width = 2
-        elif object_type == 'open-order':
-            color = ChartUiData.LIGHT_COLOR
-            width = 2
-        elif object_type == 'close-order':
-            color = ChartUiData.LIGHT_COLOR
-            width = 2
-        elif object_type == 'closed-order':
-            color = ChartUiData.GRAY_COLOR
-            width = 2
-        elif object_type == 'take-profit':
-            color = ChartUiData.GREEN_COLOR
-            width = 2
-        elif object_type == 'stop-loss':
-            color = ChartUiData.ORANGE_COLOR
-            width = 2
-        elif object_type == 'trailing-stop':
-            color = ChartUiData.ORANGE_COLOR
-            width = 2
-        elif object_type == 'liquidation-price':
-            color = ChartUiData.RED_COLOR
-            width = 2
-        if force_color:
-            color = force_color
-        return color, width
+    def _get_view_parameters(self, *,
+                             object_type,
+                             default_marker_label_color,
+                             default_marker_background_color,
+                             default_line_color,
+                             default_line_label_color,
+                             default_line_label_background_color,
+                             default_line_width,
+                             force_marker_label_color,
+                             force_marker_background_color,
+                             force_line_color,
+                             force_line_label_color,
+                             force_line_label_background_color,
+                             force_line_width):
+        marker_label_color = default_marker_label_color
+        marker_background_color = default_marker_background_color
+        line_color = default_line_color
+        line_label_color = default_line_label_color
+        line_label_background_color = default_line_label_background_color
+        line_width = default_line_width
 
-    def set_stock_data(self, stock_data: dict):
+        if object_type == 'current-price':
+            marker_label_color = ChartUiData.LIGHT_COLOR
+            marker_background_color = ChartUiData.BLUE_COLOR
+            line_color = ChartUiData.BLUE_COLOR
+            line_label_color = ChartUiData.LIGHT_COLOR
+            line_label_background_color = ChartUiData.BLUE_COLOR
+            line_width = 3
+        elif object_type == 'entry-price':
+            marker_label_color = ChartUiData.DARK_COLOR
+            marker_background_color = ChartUiData.LIGHT_COLOR
+            line_color = ChartUiData.LIGHT_COLOR
+            line_label_color = ChartUiData.DARK_COLOR
+            line_label_background_color = ChartUiData.LIGHT_COLOR
+            line_width = 2
+        elif object_type == 'open-order':
+            marker_label_color = ChartUiData.LIGHT_COLOR
+            marker_background_color = ChartUiData.DARK_COLOR
+            line_color = ChartUiData.DARK_COLOR
+            line_label_color = ChartUiData.LIGHT_COLOR
+            line_label_background_color = ChartUiData.DARK_COLOR
+            line_width = 2
+        elif object_type == 'close-order':
+            marker_label_color = ChartUiData.DARK_COLOR
+            marker_background_color = ChartUiData.GRAY_COLOR
+            line_color = ChartUiData.GRAY_COLOR
+            line_label_color = ChartUiData.DARK_COLOR
+            line_label_background_color = ChartUiData.GRAY_COLOR
+            line_width = 2
+        elif object_type == 'closed-order':
+            marker_label_color = ChartUiData.GRAY_COLOR
+            marker_background_color = ChartUiData.DARK_COLOR
+            line_color = ChartUiData.DARK_COLOR
+            line_label_color = ChartUiData.GRAY_COLOR
+            line_label_background_color = ChartUiData.DARK_COLOR
+            line_width = 2
+        elif object_type == 'take-profit':
+            marker_label_color = ChartUiData.DARK_COLOR
+            marker_background_color = ChartUiData.GREEN_COLOR
+            line_color = ChartUiData.GREEN_COLOR
+            line_label_color = ChartUiData.DARK_COLOR
+            line_label_background_color = ChartUiData.GREEN_COLOR
+            line_width = 2
+        elif object_type == 'stop-loss':
+            marker_label_color = ChartUiData.DARK_COLOR
+            marker_background_color = ChartUiData.ORANGE_COLOR
+            line_color = ChartUiData.ORANGE_COLOR
+            line_label_color = ChartUiData.DARK_COLOR
+            line_label_background_color = ChartUiData.ORANGE_COLOR
+            line_width = 2
+        elif object_type == 'trailing-stop':
+            marker_label_color = ChartUiData.DARK_COLOR
+            marker_background_color = ChartUiData.ORANGE_COLOR
+            line_color = ChartUiData.ORANGE_COLOR
+            line_label_color = ChartUiData.DARK_COLOR
+            line_label_background_color = ChartUiData.ORANGE_COLOR
+            line_width = 1
+        elif object_type == 'liquidation-price':
+            marker_label_color = ChartUiData.DARK_COLOR
+            marker_background_color = ChartUiData.RED_COLOR
+            line_color = ChartUiData.RED_COLOR
+            line_label_color = ChartUiData.DARK_COLOR
+            line_label_background_color = ChartUiData.RED_COLOR
+            line_width = 3
+        if force_marker_label_color:
+            marker_label_color = force_marker_label_color
+        if force_marker_background_color:
+            marker_background_color = force_marker_background_color
+        if force_line_color:
+            line_color = force_line_color
+        if force_line_label_color:
+            line_label_color = force_line_label_color
+        if force_line_label_background_color:
+            line_label_background_color = force_line_label_background_color
+        if force_line_width:
+            line_width = force_line_width
+        return {
+            'marker_label_color': marker_label_color,
+            'marker_background_color': marker_background_color,
+            'line_color': line_color,
+            'line_label_color': line_label_color,
+            'line_label_background_color': line_label_background_color,
+            'line_width': line_width,
+        }
+
+    def set_stock_data(self, stock_data: dict, clear_auto_overlay: bool = False):
         self.check()
-        self._chart.options['title']['text'] = stock_data['title']
+        self._chart_caption_label.set_text(stock_data['title'])
         stock_data_input = stock_data['input']
         self._set_contract(stock_data_input['contract'])
         self._set_date_from(stock_data_input['date_from'])
@@ -335,128 +479,104 @@ class StockChartUiComponent:
         self._set_timeframe(stock_data_input['timeframe'])
         self._set_price_type(stock_data_input['price_type'])
         self._chart.options['parameters'] = stock_data['parameters']
-        self.get_series(StockChartUiComponent.OHLC_SERIES)['data'] = stock_data['ohlc']
-        self.get_series(StockChartUiComponent.VOLUME_SERIES)['data'] = stock_data['volume']
-        self._chart.options['series'] = [
-            self.get_series(StockChartUiComponent.OHLC_SERIES),
-            self.get_series(StockChartUiComponent.VOLUME_SERIES),
-            *stock_data['other_series']
-        ]
-        if isinstance(stock_data['x_lines'], list):
-            self._chart.options['xAxis']['plotLines'] = stock_data['x_lines']
-        if isinstance(stock_data['ohlc_lines'], list):
-            self._chart.options['yAxis'][0]['plotLines'] = stock_data['ohlc_lines']
-        if isinstance(stock_data['volume_lines'], list):
-            self._chart.options['yAxis'][1]['plotLines'] = stock_data['volume_lines']
+        self._chart.options['data'] = stock_data['data']
+
+        if stock_data['data']:
+            p0 = 0.1
+            v0 = 0.1
+            p11 = stock_data['data'][0]['low']
+            p12 = stock_data['data'][0]['high']
+            v1 = stock_data['data'][0]['timestamp']
+            p21 = stock_data['data'][-1]['low']
+            p22 = stock_data['data'][-1]['high']
+            v2 = stock_data['data'][-1]['timestamp']
+            price_digits = max(len(f"{abs(x % 1):.12f}".rstrip('0')) - 2
+                               for x in (p0, p11, p12, p21, p22) if x % 1 > 0)
+            volume_digits = max(len(f"{abs(x % 1):.12f}".rstrip('0')) - 2
+                                for x in (v0, v1, v2) if x % 1 > 0)
+            self._chart.options['price_precision'] = price_digits
+            self._chart.options['volume_precision'] = volume_digits
+
+        if clear_auto_overlay:
+            self._chart.remove_overlay(KLineChart.AUTO_DRAWINGS_GROUP)
         if isinstance(stock_data['new_object_contract'], list):
             new_objects = stock_data['new_object_contract']
-            new_series = []
-            new_x_lines = []
-            new_ohlc_lines = []
-            new_volume_lines = []
             for obj in new_objects:
-                tmp_series = []
-                tmp_x_lines = []
-                tmp_ohlc_lines = []
-                tmp_volume_lines = []
-                target = obj.get('target', 'ohlc')
-                visual_type = obj.get('visual-type', 'none')
-                object_type = obj.get('object-type', 'other')
-                marker_label = obj.get('marker-label', '')
-                line_label = obj.get('line-label', '')
-                values = obj.get('values', [])
-                marker_color_f = obj.get('marker-color', '')
-                line_color_f = obj.get('line-color', '')
-                if target not in self.__new_object_contract['target']:
-                    continue
-                if visual_type not in self.__new_object_contract['visual-type']:
-                    continue
-                if object_type not in self.__new_object_contract['object-type']:
-                    continue
-                if type(marker_label) is not type(self.__new_object_contract['marker-label']):
-                    continue
-                if type(line_label) is not type(self.__new_object_contract['line-label']):
-                    continue
-                if type(values) is type(self.__new_object_contract['values']) and not values:
-                    continue
-                if type(marker_color_f) is not type(self.__new_object_contract['marker-color']):
-                    continue
-                if type(line_color_f) is not type(self.__new_object_contract['line-color']):
-                    continue
-                if visual_type in ('marker', 'marker-and-line'):
-                    values_l = values if (isinstance(values, list) and
-                                          values and isinstance(values[0], list)) else [values]
-                    marker_color, _ = self._get_object_type_color_width(
-                        object_type=object_type,
-                        default_color=ChartUiData.PINK_COLOR,
-                        force_color=marker_color_f
-                    )
-                    tmp_series.append(ChartUiData.make_marker(
-                        target=target,
-                        marker_id=''.join(x for x in marker_label if x.isalnum() or x == '_'),
-                        marker_name=marker_label,
-                        data=values_l,
-                        color=marker_color,
-                        radius=10,
-                    ))
-                if visual_type in ('line', 'marker-and-line'):
-                    value = values if not isinstance(values, list) else\
-                            values[1] if len(values) >= 2 else\
-                            values[0] if not isinstance(values[0], list) else\
-                            values[0][1] if len(values[0]) >= 2 else values[0][0]
-                    line_color, line_width = self._get_object_type_color_width(
-                        object_type=object_type,
-                        default_color=ChartUiData.PINK_COLOR,
-                        force_color=line_color_f
-                    )
-                    if target == 'x':
-                        tmp_lines = tmp_x_lines
-                    elif target == 'volume':
-                        tmp_lines = tmp_volume_lines
-                    else:
-                        tmp_lines = tmp_ohlc_lines
-                    tmp_lines.append(ChartUiData.make_line(
-                        value=value,
-                        label_text=line_label,
-                        label_align='left',
-                        line_color=line_color,
-                        line_width=line_width
-                    ))
-                new_series.extend(tmp_series)
-                new_x_lines.extend(tmp_x_lines)
-                new_ohlc_lines.extend(tmp_ohlc_lines)
-                new_volume_lines.extend(tmp_volume_lines)
-            self._chart.options['series'].extend(new_series)
-            self._chart.options['xAxis']['plotLines'].extend(new_x_lines)
-            self._chart.options['yAxis'][0]['plotLines'].extend(new_ohlc_lines)
-            self._chart.options['yAxis'][1]['plotLines'].extend(new_volume_lines)
+                try:
+                    obj_type = obj.get('type')
+                    if obj_type not in self.__new_object_contract['type']:
+                        continue
+                    marker_label = obj.get('marker-label', '')
+                    if type(marker_label) is not type(self.__new_object_contract['marker-label']):
+                        continue
+                    line_label = obj.get('line-label', '')
+                    if type(line_label) is not type(self.__new_object_contract['line-label']):
+                        continue
+                    marker_label_color = obj.get('marker-label-color', '')
+                    if type(marker_label_color) is not type(self.__new_object_contract['marker-label-color']):
+                        continue
+                    marker_background_color = obj.get('marker-background-color', '')
+                    if type(marker_background_color) is not type(self.__new_object_contract['marker-background-color']):
+                        continue
+                    line_color = obj.get('line-color', '')
+                    if type(line_color) is not type(self.__new_object_contract['line-color']):
+                        continue
+                    line_label_color = obj.get('line-label-color', '')
+                    if type(line_label_color) is not type(self.__new_object_contract['line-label-color']):
+                        continue
+                    line_label_background_color = obj.get('line-label-background-color', '')
+                    if type(line_label_background_color) is not type(self.__new_object_contract['line-label-background-color']):
+                        continue
+                    line_width = obj.get('line-width', '')
+                    if type(line_width) is not type(self.__new_object_contract['line-width']):
+                        continue
+                    values = obj.get('values', [])
+                    if type(values) is not type(self.__new_object_contract['values']) or not values:
+                        continue
+                    if obj_type == 'overlay':
+                        overlay_type = obj.get('overlay-type')
+                        overlay_hint = obj.get('overlay-hint')
+                        view_parameters = self._get_view_parameters(
+                            object_type=overlay_hint,
+                            default_marker_label_color=ChartUiData.LIGHT_COLOR,
+                            default_marker_background_color=ChartUiData.PINK_COLOR,
+                            default_line_color=ChartUiData.PINK_COLOR,
+                            default_line_label_color=ChartUiData.LIGHT_COLOR,
+                            default_line_label_background_color=ChartUiData.PINK_COLOR,
+                            default_line_width=1,
+                            force_marker_label_color=marker_label_color,
+                            force_marker_background_color=marker_background_color,
+                            force_line_color=line_color,
+                            force_line_label_color=line_label_color,
+                            force_line_label_background_color=line_label_background_color,
+                            force_line_width=line_width
+                        )
+                        if 'marker' in overlay_type:
+                            if isinstance(values[0], list):
+                                values = values[0]
+                            timestamp, value = values
+                            marker = ChartUiData.make_marker(
+                                timestamp=timestamp,
+                                value=value,
+                                label_text=marker_label,
+                                label_color=view_parameters['marker_label_color'],
+                                label_background_color=view_parameters['marker_background_color'],
+                            )
+                            self._chart.add_overlay(marker)
+                        if 'line' in overlay_type:
+                            if isinstance(values[0], list):
+                                values = values[0]
+                            _, value = values
+                            line = ChartUiData.make_line(
+                                value=value,
+                                label_text=line_label,
+                                label_color=view_parameters['line_label_color'],
+                                label_background_color=view_parameters['line_label_background_color'],
+                                line_color=view_parameters['line_color'],
+                                line_width=view_parameters['line_width'],
+                                align='right',
+                            )
+                            self._chart.add_overlay(line)
+                except:
+                    traceback.print_exc()
         self.update()
-
-    def _load_theme(self, theme_path):
-        try:
-            if not theme_path:
-                theme_path = os.path.join(os.path.dirname(__file__), "high_contrast_dark_theme.json")
-            with open(theme_path, 'r+', encoding='utf-8') as fp:
-                self._theme = json.load(fp)
-        except:
-            traceback.print_exc()
-
-    def _apply_theme(self, options: dict):
-        if not self._theme:
-            return
-        tmp = [[options, self._theme]]
-        while tmp:
-            item, tail = tmp.pop()
-            if isinstance(item, dict) and isinstance(tail, dict):
-                for k, v in tail.items():
-                    if k in item:
-                        tmp.append([item[k], tail[k]])
-                    else:
-                        item[k] = tail[k]
-            elif isinstance(item, list) and isinstance(tail, list):
-                for v in tail:
-                    if v not in item:
-                        item.append(v)
-            elif isinstance(item, list) and isinstance(tail, dict):
-                for x in item:
-                    tmp.append([x, tail])

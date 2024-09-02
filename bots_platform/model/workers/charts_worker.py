@@ -43,8 +43,7 @@ class ChartsWorker(Worker):
                                 date_to: int,
                                 timeframe: str,
                                 price_type,
-                                ohlc_data: list,
-                                volume_data: list):
+                                data: list):
         expression = contract.upper()
         symbols = self.__symbol_pattern.findall(expression)
         symbols.sort(key=lambda x: len(x), reverse=True)
@@ -57,9 +56,9 @@ class ChartsWorker(Worker):
         trans = str.maketrans(trans)
         locals_dict = dict()
         for symbol in symbols:
-            ts = ohlc_data[-1][0] if ohlc_data else 0
-            tmp_ohlc_data = [[ts] for x in range(len(ohlc_data))]
-            tmp_volume_data = [[ts] for x in range(len(volume_data))]
+            ts = data[-1]['timestamp'] if data else 0
+            tmp_ohlc_data = [[ts] for x in range(len(data))]
+            tmp_volume_data = [[ts] for x in range(len(data))]
             try:
                 chart_data = await self._aux_update_chart_data(
                     contract=symbol,
@@ -82,18 +81,22 @@ class ChartsWorker(Worker):
             expression = expression.replace(symbol, variable)
             locals_dict[variable] = ArithOHLCVList(ohlcv)
         r = eval(expression, {}, locals_dict).list()
-        first_ts = r and r[0][0] or 0
-        for i in range(len(ohlc_data)):
-            if ohlc_data[i][0] == first_ts:
-                ohlc_data = ohlc_data[:i]
-                volume_data = volume_data[:i]
+        first_ts = r and r[0] and r[0][0] or 0
+        for i in range(len(data)):
+            if data[i]['timestamp'] == first_ts:
+                data = data[:i]
                 break
-        ohlc_data.extend(x[:-1] for x in r)
-        volume_data.extend([x[0], x[-1]] for x in r)
+        data.extend({
+            'timestamp': x[0],
+            'open': x[1],
+            'high': x[2],
+            'low': x[3],
+            'close': x[4],
+            'volume': x[5] if len(x) >= 6 else 0,
+        } for x in r)
         return {
             'date_from': date_from,
-            'ohlc': ohlc_data,
-            'volume': volume_data
+            'data': data
         }
 
     async def _aux_update_chart_data(self,

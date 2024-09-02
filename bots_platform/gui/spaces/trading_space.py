@@ -4,7 +4,7 @@ from decimal import Decimal
 import traceback
 
 from bots_platform.model.workers import TradingWorker
-from bots_platform.model.utils import get_exchange_trade_url, TimeStamp
+from bots_platform.model.utils import get_exchange_trade_url, TimeStamp, get_symbol
 from bots_platform.gui.spaces import Columns, ChartsSpace
 
 
@@ -25,6 +25,7 @@ class TradingSpace:
         self._charts_space: Union[ChartsSpace, None] = None
         self._elements = dict()
         self._constructed = False
+        self.__force_enable_add_update = False
 
     async def init(self):
         self._elements.clear()
@@ -53,6 +54,12 @@ class TradingSpace:
                 pass
             self._constructed = True
 
+        def force_enable_add_update():
+            if update_charts_checkbox.value:
+                self.__force_enable_add_update = True
+            else:
+                self.__force_enable_add_update = False
+
         with self._trading_space:
 
             if TradingSpace.UPDATE_BUTTON not in self._elements:
@@ -67,7 +74,9 @@ class TradingSpace:
                 filter_input = self._elements[TradingSpace.FILTER_INPUT]
 
             if ChartsSpace.UPDATE_CHARTS_CHECKBOX not in self._elements:
-                update_charts_checkbox = ui.checkbox('Automatically create and update charts', value=False)
+                update_charts_checkbox = ui.checkbox('Automatically create and update charts',
+                                                     value=False,
+                                                     on_change=lambda _: force_enable_add_update())
                 self._elements[ChartsSpace.UPDATE_CHARTS_CHECKBOX] = update_charts_checkbox
 
             autocomplete = set()
@@ -234,7 +243,6 @@ class TradingSpace:
             try:
                 update_trading_timer = self._elements.pop(TradingSpace.UPDATE_TRADING_TIMER)
                 update_trading_timer.cancel()
-                update_trading_timer.delete()
             except:
                 pass
 
@@ -344,6 +352,9 @@ class TradingSpace:
                         first_timestamp = first_timestamps.get(key)
                         if not first_timestamp:
                             continue
+                        symbol_group = get_symbol(contract)
+                        currency = symbol_group[0] if symbol_group[-1] == 'inverse' else symbol_group[1]
+                        currency = currency.lower()
                         first_timestamp = TimeStamp.convert_utc_to_local_timestamp(first_timestamp)
                         b_add_update = False
                         b_last_update = False
@@ -353,91 +364,80 @@ class TradingSpace:
                         if 'position' in side_d:
                             position = side_d['position']
                             objects.append({
-                                'target': 'x',
-                                'visual-type': 'line',
-                                'object-type': 'entry-price',
-                                'marker-label': '',
-                                'values': position['timestamp'],
+                                'type': 'overlay',
+                                'overlay-type': 'line',
+                                'overlay-hint': 'entry-price',
+                                'line-label': f"Entry ({position['entry_price']})",
+                                'values': put_numbers_pair(position['timestamp'], position['entry_price']),
                             })
                             objects.append({
-                                'target': 'ohlc',
-                                'visual-type': 'line',
-                                'object-type': 'entry-price',
-                                'marker-label': str(position['entry_price']),
-                                'values': position['entry_price'],
+                                'type': 'overlay',
+                                'overlay-type': 'line',
+                                'overlay-hint': 'current-price',
+                                'line-label': f"{position['pnl']:+} {currency}",
+                                'values': put_numbers_pair(position['timestamp'], position['mark_price']),
                             })
                             objects.append({
-                                'target': 'ohlc',
-                                'visual-type': 'line',
-                                'object-type': 'current-price',
-                                'marker-label': str(position['mark_price']),
-                                'line-label': str(position['pnl']),
-                                'values': put_numbers_pair(current_timestamp, position['mark_price']),
-                            })
-                            objects.append({
-                                'target': 'ohlc',
-                                'visual-type': 'line',
-                                'object-type': 'liquidation-price',
-                                'marker-label': str(position['liquidation_price']),
+                                'type': 'overlay',
+                                'overlay-type': 'line',
+                                'overlay-hint': 'liquidation-price',
+                                'line-label': str(position['liquidation_price']),
                                 'values': put_numbers_pair(current_timestamp, position['liquidation_price']),
                             })
                             objects.append({
-                                'target': 'ohlc',
-                                'visual-type': 'line',
-                                'object-type': 'trailing-stop',
-                                'marker-label': str(position['trailing_stop']),
+                                'type': 'overlay',
+                                'overlay-type': 'line',
+                                'overlay-hint': 'trailing-stop',
+                                'line-label': str(position['trailing_stop']),
                                 'values': put_numbers_pair(current_timestamp, position['trailing_stop']),
                             })
                         if 'open_orders' in side_d:
                             open_orders = side_d['open_orders']
                             for open_order in open_orders:
                                 if any(x in open_order['order'] for x in ('Open', 'Buy')):
-                                    marker_label = str(open_order['price'])
+                                    line_label = str(open_order['price'])
                                     if open_order['tp_sl']:
-                                        marker_label = f"{marker_label} ({open_order['tp_sl']})"
+                                        line_label = f"{line_label} ({open_order['tp_sl']})"
                                     objects.append({
-                                        'target': 'ohlc',
-                                        'visual-type': 'line',
-                                        'object-type': 'open-order',
-                                        'marker-label': marker_label,
+                                        'type': 'overlay',
+                                        'overlay-type': 'line',
+                                        'overlay-hint': 'open-order',
+                                        'line-label': line_label,
                                         'values': put_numbers_pair(current_timestamp, open_order['price']),
                                     })
                                 elif any(x in open_order['order'] for x in ('Close', 'Sell')):
-                                    marker_label = str(open_order['price'])
+                                    line_label = str(open_order['price'])
                                     if open_order['tp_sl']:
-                                        marker_label = f"{marker_label} ({open_order['tp_sl']})"
+                                        line_label = f"{line_label} ({open_order['tp_sl']})"
                                     objects.append({
-                                        'target': 'ohlc',
-                                        'visual-type': 'line',
-                                        'object-type': 'close-order',
-                                        'marker-label': marker_label,
+                                        'type': 'overlay',
+                                        'overlay-type': 'line',
+                                        'overlay-hint': 'close-order',
+                                        'line-label': line_label,
                                         'values': put_numbers_pair(current_timestamp, open_order['price']),
                                     })
                                 elif 'TakeProfit' in open_order['order']:
                                     objects.append({
-                                        'target': 'ohlc',
-                                        'visual-type': 'line',
-                                        'object-type': 'take-profit',
-                                        'marker-label': str(open_order['price']),
-                                        'line-label': open_order['tp_sl'],
+                                        'type': 'overlay',
+                                        'overlay-type': 'line',
+                                        'overlay-hint': 'take-profit',
+                                        'line-label': str(open_order['tp_sl']),
                                         'values': put_numbers_pair(current_timestamp, open_order['price']),
                                     })
                                 elif 'Stop' in open_order['order']:
                                     objects.append({
-                                        'target': 'ohlc',
-                                        'visual-type': 'line',
-                                        'object-type': 'stop-loss',
-                                        'marker-label': str(open_order['price']),
-                                        'line-label': open_order['tp_sl'],
+                                        'type': 'overlay',
+                                        'overlay-type': 'line',
+                                        'overlay-hint': 'stop-loss',
+                                        'line-label': str(open_order['tp_sl']),
                                         'values': put_numbers_pair(current_timestamp, open_order['price']),
                                     })
                                 else:
                                     line_label = open_order['tp_sl'] if open_order['tp_sl'] else open_order['order']
                                     objects.append({
-                                        'target': 'ohlc',
-                                        'visual-type': 'line',
-                                        'object-type': 'other',
-                                        'marker-label': str(open_order['price']),
+                                        'type': 'overlay',
+                                        'overlay-type': 'line',
+                                        'overlay-hint': 'other',
                                         'line-label': line_label,
                                         'values': put_numbers_pair(current_timestamp, open_order['price']),
                                     })
@@ -446,31 +446,38 @@ class TradingSpace:
                             closed_orders = side_d['closed_orders']
                             if closed_orders:
                                 closed_order = max(closed_orders, key=lambda x: x['timestamp'])
-                                line_label = closed_order['tp_sl'] if closed_order['tp_sl'] else closed_order['order']
+                                marker_label = closed_order['tp_sl'] if closed_order['tp_sl'] else closed_order['order']
                                 objects.append({
-                                    'target': 'ohlc',
-                                    'visual-type': 'marker-and-line',
-                                    'object-type': 'closed-order',
-                                    'marker-label': str(closed_order['price']),
-                                    'line-label': line_label,
+                                    'type': 'overlay',
+                                    'overlay-type': 'marker',
+                                    'overlay-hint': 'closed-order',
+                                    'marker-label': marker_label,
                                     'values': put_numbers_pair(closed_order['timestamp'], closed_order['price']),
                                 })
                                 b_last_update = True
                         b_add_update = b_add_update or objects
                         if b_add_update:
                             try:
+                                timeframe = TimeStamp.adjust_timeframe(
+                                    timeframes=self._trading_worker.get_timeframes(),
+                                    candles=838,
+                                    date_from_timestamp=first_timestamp,
+                                    date_to_timestamp=current_timestamp
+                                )
                                 await self._charts_space.add_update_auto_chart(
                                     first_timestamp=first_timestamp,
                                     contract=contract,
                                     side=side,
-                                    timeframe='1m',
+                                    timeframe=timeframe,
                                     price_type='OHLCV',
                                     objects=objects,
-                                    chart_type='candlestick',
+                                    chart_type='candle_solid',
                                     complex=False,
-                                    last_update=b_last_update
+                                    last_update=b_last_update,
+                                    forget=self.__force_enable_add_update
                                 )
                             except:
                                 traceback.print_exc()
         except:
             traceback.print_exc()
+        self.__force_enable_add_update = False

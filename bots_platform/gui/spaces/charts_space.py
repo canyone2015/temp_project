@@ -54,7 +54,7 @@ class ChartsSpace:
                 pass
 
             if ChartsSpace.UPDATE_CHARTS_CHECKBOX not in self._elements:
-                update_charts_checkbox = ui.checkbox('Auto update charts',
+                update_charts_checkbox = ui.checkbox('Auto update custom charts',
                                                      value=False,
                                                      on_change=lambda *_:
                                                      self._auto_update_timer_check())
@@ -107,18 +107,27 @@ class ChartsSpace:
             try:
                 update_charts_timer = self._elements.pop(ChartsSpace.UPDATE_CHARTS_TIMER)
                 update_charts_timer.cancel()
-                update_charts_timer.delete()
             except:
                 pass
 
     def add_custom_chart(self, *, complex=False):
 
+        async def update_chart_triggered(chart, *_, **__):
+            await self._update_chart(chart)
+
+        def duplicate_chart_triggered(*_, **__):
+            nonlocal stock_chart, chart_col, complex
+            try:
+                new_stock_chart, new_chart_col = self.add_custom_chart(complex=complex)
+                new_stock_chart.set_stock_data(stock_chart.get_stock_data())
+                idx = new_chart_col.parent_slot.children.index(chart_col)
+                new_chart_col.move(charts_box, idx + 1)
+            except:
+                traceback.print_exc()
+
         def delete_chart_triggered(*_, **__):
             charts_box.remove(chart_col)
             self._charts.remove(stock_chart)
-
-        async def update_chart_triggered(chart, *_, **__):
-            await self._update_chart(chart)
 
         if ChartsSpace.CHARTS_BOX in self._elements:
             charts_box: ui.column = self._elements[ChartsSpace.CHARTS_BOX]
@@ -132,6 +141,8 @@ class ChartsSpace:
                     price_types = self._charts_worker.get_price_types()
                     stock_chart.set_price_types(price_types)
                     stock_chart.set_update_chart_callback(update_chart_triggered)
+                    stock_chart.set_duplicate_chart_callback(duplicate_chart_triggered)
+                    stock_chart.set_delete_chart_callback(delete_chart_triggered)
                     prev_date = TimeStamp.format_date(TimeStamp.get_local_dt_from_now() - TimeStamp.timedelta(days=1))
                     stock_chart.create(
                         contract=r'''BTC/USDT:USDT''',
@@ -146,9 +157,8 @@ class ChartsSpace:
                     stock_chart.check()
                     stock_chart.update()
                     self._charts.append(stock_chart)
-                    ui.button('Delete chart', on_click=delete_chart_triggered)
                     ui.separator()
-                    return stock_chart
+                    return stock_chart, chart_col
 
     async def update_custom_charts(self):
         for stock_chart in self._charts:
@@ -166,8 +176,7 @@ class ChartsSpace:
         p_timeframe = parameters['timeframe']
         p_price_type = parameters['price_type']
         p_real_date_from = parameters['real_date_from']
-        ohlc_data = stock_data['ohlc']
-        volume_data = stock_data['volume']
+        data = stock_data['data']
         stock_data_input = stock_data['input']
         contract = stock_data_input['contract']
         date_from = stock_data_input['date_from']
@@ -202,8 +211,7 @@ class ChartsSpace:
             date_from_timestamp, date_to_timestamp, utc=False)
 
         if b_clear or 'random' in contract.lower():
-            ohlc_data.clear()
-            volume_data.clear()
+            data.clear()
             p_real_date_from = date_from_timestamp
 
         try:
@@ -213,18 +221,15 @@ class ChartsSpace:
                 date_to=date_to_timestamp,
                 timeframe=timeframe,
                 price_type=price_type,
-                ohlc_data=ohlc_data,
-                volume_data=volume_data
+                data=data
             )
             p_real_date_from = chart_data['date_from']
-            ohlc_data = chart_data['ohlc']
-            volume_data = chart_data['volume']
+            data = chart_data['data']
         except:
             traceback.print_exc()
 
         stock_data['title'] = f"{contract} ({price_type})"
-        stock_data['ohlc'] = ohlc_data
-        stock_data['volume'] = volume_data
+        stock_data['data'] = data
 
         parameters['contract'] = contract
         parameters['date_from'] = date_from
@@ -233,7 +238,8 @@ class ChartsSpace:
         parameters['price_type'] = price_type
         parameters['real_date_from'] = p_real_date_from
 
-        stock_chart.set_stock_data(stock_data)
+        stock_chart.set_contracts(self._charts_worker.get_contracts())
+        stock_chart.set_stock_data(stock_data, clear_auto_overlay=True)
 
     async def add_update_auto_chart(self, *,
                                     first_timestamp,
@@ -242,32 +248,58 @@ class ChartsSpace:
                                     objects: list,
                                     timeframe: str = '1m',
                                     price_type: str = 'OHLCV',
-                                    chart_type='candlestick',
+                                    chart_type='candle_solid',
                                     complex: bool = False,
-                                    last_update: bool = False):
+                                    last_update: bool = False,
+                                    forget: bool = False):
 
         key = (first_timestamp, contract, side)
         if key in self._auto_charts:
+            if forget:
+                self._auto_charts.pop(key)
+                return await self.add_update_auto_chart(
+                    first_timestamp=first_timestamp,
+                    contract=contract,
+                    side=side,
+                    objects=objects,
+                    timeframe=timeframe,
+                    price_type=price_type,
+                    chart_type=chart_type,
+                    complex=complex,
+                    last_update=last_update,
+                    forget=forget,
+                )
             stock_chart = self._auto_charts[key]
-            if stock_chart == 'deleted':
+            if not isinstance(stock_chart, StockChartUiComponent):
                 return
             await self._update_chart(stock_chart)
-            stock_data = stock_chart.get_stock_data(clear_series=True, clear_lines=True)
+            stock_data = stock_chart.get_stock_data()
             stock_data['new_object_contract'] = objects
-            stock_chart.set_stock_data(stock_data)
+            stock_chart.set_contracts(self._charts_worker.get_contracts())
+            stock_chart.set_stock_data(stock_data, clear_auto_overlay=True)
             if last_update:
-                self._auto_charts[key] = 'deleted'
+                self._auto_charts[key] = 'deleted'  # todo: first_timestamp
             return
         if last_update:
             return
+
+        async def update_chart_triggered(*_, **__):
+            pass
+
+        def duplicate_chart_triggered(*_, **__):
+            nonlocal stock_chart, chart_col, complex
+            try:
+                new_stock_chart, new_chart_col = self.add_custom_chart(complex=complex)
+                new_stock_chart.set_stock_data(stock_chart.get_stock_data())
+                idx = new_chart_col.parent_slot.children.index(chart_col)
+                new_chart_col.move(charts_box, idx + 1)
+            except:
+                traceback.print_exc()
 
         def delete_chart_triggered(*_, **__):
             self._auto_charts[key] = 'deleted'
             charts_box.remove(chart_col)
             self._charts.remove(stock_chart)
-
-        async def update_chart_triggered(*_, **__):
-            pass
 
         async def dialog_yes():
             nonlocal dialog
@@ -277,6 +309,12 @@ class ChartsSpace:
         async def dialog_no():
             nonlocal dialog
             dialog.close()
+
+        with ui.dialog() as dialog, ui.card().classes('items-center'):
+            ui.label('Are you sure you want to delete this chart?')
+            with ui.row():
+                ui.button('Yes', on_click=dialog_yes)
+                ui.button('No', on_click=dialog_no)
 
         if ChartsSpace.CHARTS_BOX in self._elements:
             charts_box: ui.column = self._elements[ChartsSpace.CHARTS_BOX]
@@ -290,6 +328,8 @@ class ChartsSpace:
                     price_types = self._charts_worker.get_price_types()
                     stock_chart.set_price_types(price_types)
                     stock_chart.set_update_chart_callback(update_chart_triggered)
+                    stock_chart.set_duplicate_chart_callback(duplicate_chart_triggered)
+                    stock_chart.set_delete_chart_callback(lambda *_, **__: dialog.open())
                     prev_date = TimeStamp.convert_local_to_utc_timestamp(first_timestamp)
                     prev_date = TimeStamp.format_date(TimeStamp.get_utc_dt_from_timestamp(prev_date))
                     stock_chart.create(
@@ -304,18 +344,12 @@ class ChartsSpace:
                     )
                     stock_chart.check()
                     await self._update_chart(stock_chart)
-                    stock_data = stock_chart.get_stock_data(clear_series=True, clear_lines=True)
+                    stock_data = stock_chart.get_stock_data()
                     stock_data['new_object_contract'] = objects
-                    stock_chart.set_stock_data(stock_data)
+                    stock_chart.set_stock_data(stock_data, clear_auto_overlay=True)
                     self._charts.append(stock_chart)
                     self._auto_charts[key] = stock_chart
-                    with ui.dialog() as dialog, ui.card().classes('items-center'):
-                        ui.label('Are you sure you want to delete this chart?')
-                        with ui.row():
-                            ui.button('Yes', on_click=dialog_yes)
-                            ui.button('No', on_click=dialog_no)
-                    ui.button('Delete chart', on_click=dialog.open).classes("m-auto")
                     ui.separator()
                     chart_col.update()
-            charts_box.update()
+                charts_box.update()
             return stock_chart

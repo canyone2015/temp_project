@@ -209,6 +209,5 @@ class BalanceSpace:
             try:
                 update_balance_timer = self._elements.pop(BalanceSpace.UPDATE_BALANCE_TIMER)
                 update_balance_timer.cancel()
-                update_balance_timer.delete()
             except:
                 pass

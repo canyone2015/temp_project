@@ -1,3 +1,2 @@
-nicegui~=1.4.29
-ccxt~=4.3.50
-nicegui[highcharts]
+nicegui~=2.0.1
+ccxt~=4.3.94
