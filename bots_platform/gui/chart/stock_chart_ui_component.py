@@ -117,6 +117,14 @@ class StockChartUiComponent:
             mode = value
             mode_button.set_text(f"Mode [{mode.replace('_', ' ').capitalize()}]")
 
+        def update():
+            self._chart.options['styles'].setdefault('u', 0)
+            if self._chart.options['styles']['u'] == 0:
+                self._chart.options['styles']['u'] = 1
+            else:
+                self._chart.options['styles']['u'] = 0
+            self._chart.update()
+
         mode = ''
         self._complex = complex
         in_row_style = 'margin: auto auto;'
@@ -190,7 +198,7 @@ class StockChartUiComponent:
                 with ui.card(align_items='center').style(in_row_style), ui.row():
                     ui.label('Chart').style(in_row_style)
                     ui.button('Update view',
-                              on_click=lambda *_: self._chart.update(),
+                              on_click=lambda *_: update(),
                               color='dark').style(in_row_style)
                     ui.button('Duplicate',
                               on_click=lambda *_: self._duplicate_chart_callback(),
@@ -486,10 +494,10 @@ class StockChartUiComponent:
             v0 = 0.1
             p11 = stock_data['data'][0]['low']
             p12 = stock_data['data'][0]['high']
-            v1 = stock_data['data'][0]['timestamp']
+            v1 = stock_data['data'][0]['volume']
             p21 = stock_data['data'][-1]['low']
             p22 = stock_data['data'][-1]['high']
-            v2 = stock_data['data'][-1]['timestamp']
+            v2 = stock_data['data'][-1]['volume']
             price_digits = max(len(f"{abs(x % 1):.12f}".rstrip('0')) - 2
                                for x in (p0, p11, p12, p21, p22) if x % 1 > 0)
             volume_digits = max(len(f"{abs(x % 1):.12f}".rstrip('0')) - 2

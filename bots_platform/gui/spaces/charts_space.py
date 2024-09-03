@@ -162,6 +162,12 @@ class ChartsSpace:
                     ui.separator()
                     return stock_chart, chart_col
 
+    async def update_charts_view(self):
+        async def update():
+            for stock_chart in self._charts:
+                stock_chart.update()
+        ui.timer(0.25, update, once=True)
+
     async def update_custom_charts(self):
         for stock_chart in self._charts:
             if stock_chart.is_custom():
@@ -186,7 +192,7 @@ class ChartsSpace:
         timeframe = stock_data_input['timeframe']
         price_type = stock_data_input['price_type']
 
-        if not contract or timer_update and 'random' in contract.lower():
+        if not contract or timer_update and contract.lower() == 'random':
             return
 
         b_clear = False
@@ -280,7 +286,7 @@ class ChartsSpace:
             stock_chart.set_contracts(self._charts_worker.get_contracts())
             stock_chart.set_stock_data(stock_data, clear_auto_overlay=True)
             if last_update:
-                self._auto_charts[key] = 'deleted'  # todo: first_timestamp
+                self._auto_charts[key] = 'deleted'
             return
         if last_update:
             return

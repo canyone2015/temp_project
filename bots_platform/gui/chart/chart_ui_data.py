@@ -116,7 +116,7 @@ class ChartUiData:
                 }
             }
         },
-        'timezone': 'Europe/Istanbul',
+        'timezone': 'Africa/Monrovia',  # UTC
         'locale': 'en',
     }
 

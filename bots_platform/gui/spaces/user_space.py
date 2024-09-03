@@ -92,6 +92,7 @@ class UserSpace:
                         self._elements[UserSpace.CHARTS_TIMER] = ui.timer(0.0,
                                                                           callback=lambda: charts_space.init(),
                                                                           once=True)
+                        charts_tab.on('mouseup', lambda *_: charts_space.update_charts_view())
                     except:
                         pass
                 with ui.tab_panel(log_tab):
