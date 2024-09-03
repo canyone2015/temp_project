@@ -3,6 +3,7 @@ from typing import Union
 
 from bots_platform.model.workers import MarketsWorker
 from bots_platform.gui.spaces import Columns
+from bots_platform.gui.utils import Notification
 from bots_platform.model.utils import get_exchange_trade_url, get_trading_view_url
 
 
@@ -19,6 +20,10 @@ class MarketsSpace:
         self._market_space = None
         self._elements = dict()
         self._constructed = False
+        notification = ui.notification(timeout=None, close_button=False)
+        notification.message = 'Fetching markets...'
+        notification.spinner = True
+        self.__notification = Notification(notification)
 
     async def init(self):
         self._elements.clear()
@@ -30,9 +35,7 @@ class MarketsSpace:
 
     async def update(self):
         self._delete_update_markets_timer()
-        notification = ui.notification(timeout=10, close_button=True)
-        notification.message = 'Fetching markets...'
-        notification.spinner = True
+        self.__notification.show()
 
         async def update_markets_triggered(force=False):
             if not self._constructed:
@@ -137,9 +140,7 @@ class MarketsSpace:
             self._elements[MarketsSpace.UPDATE_MARKETS_TIMER] = ui.timer(10 * 60,  # 10 minutes
                                                                          callback=lambda *_: update_markets_triggered(),
                                                                          once=True)
-
-        notification.spinner = False
-        notification.dismiss()
+        self.__notification.hide()
 
     def check(self):
         if self._market_space is None or self._markets_worker is None:

@@ -1,6 +1,7 @@
 from nicegui import ui
 from typing import Union
 
+from bots_platform.gui.utils import Notification
 from bots_platform.model.workers import TradingBotsWorker
 
 
@@ -18,6 +19,10 @@ class TradingBotsSpace:
 
             }
         }
+        notification = ui.notification(timeout=None, close_button=False)
+        notification.message = 'Fetching trading bots...'
+        notification.spinner = True
+        self.__notification = Notification(notification)
 
     async def init(self):
         self._elements.clear()
@@ -28,9 +33,7 @@ class TradingBotsSpace:
         self._constructed = True
 
     async def update(self):
-        notification = ui.notification(timeout=8, close_button=True)
-        notification.message = 'Fetching trading bots...'
-        notification.spinner = True
+        self.__notification.show()
         with self._trading_bots_space:
             tabs = []
             with ui.tabs().classes('w-full') as tabs_gui:
@@ -41,8 +44,7 @@ class TradingBotsSpace:
                     for tab_name, tab_element in tabs:
                         with ui.tab_panel(tab_element):
                             card = ui.card().classes('items-center')
-        notification.spinner = False
-        notification.dismiss()
+        self.__notification.hide()
 
     def check(self):
         if self._trading_bots_space is None or self._trading_bots_worker is None:

@@ -4,6 +4,7 @@ import asyncio
 
 from bots_platform.model.workers import BalanceWorker
 from bots_platform.gui.spaces import Columns
+from bots_platform.gui.utils import Notification
 
 
 class BalanceSpace:
@@ -20,6 +21,10 @@ class BalanceSpace:
         self._elements = dict()
         self._constructed = False
         self._quit_action = None
+        notification = ui.notification(timeout=None, close_button=False)
+        notification.message = 'Fetching balance...'
+        notification.spinner = True
+        self.__notification = Notification(notification)
 
     async def init(self):
         self._elements.clear()
@@ -60,9 +65,7 @@ class BalanceSpace:
 
     async def update(self):
         self._delete_update_balance_timer()
-        notification = ui.notification(timeout=8, close_button=True)
-        notification.message = 'Fetching balance...'
-        notification.spinner = True
+        self.__notification.show()
 
         async def dialog_yes():
             nonlocal dialog
@@ -177,8 +180,7 @@ class BalanceSpace:
             self._elements[BalanceSpace.UPDATE_BALANCE_TIMER] = ui.timer(5.0,  # 5 seconds
                                                                          callback=lambda *_: update_balance_triggered(),
                                                                          once=True)
-        notification.spinner = False
-        notification.dismiss()
+        self.__notification.hide()
 
     def check(self):
         if self._balance_space is None or self._balance_worker is None or self._quit_action is None:

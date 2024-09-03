@@ -3,6 +3,7 @@ from typing import Union
 import traceback
 
 from bots_platform.gui.chart import StockChartUiComponent
+from bots_platform.gui.utils import Notification
 from bots_platform.model.workers import ChartsWorker
 from bots_platform.model import TimeStamp
 
@@ -19,6 +20,10 @@ class ChartsSpace:
         self._constructed = False
         self._charts = []
         self._auto_charts = dict()
+        notification = ui.notification(timeout=None, close_button=False)
+        notification.message = 'Updating custom charts...'
+        notification.spinner = True
+        self.__notification = Notification(notification)
 
     async def init(self):
         self._elements.clear()
@@ -29,9 +34,7 @@ class ChartsSpace:
         self._constructed = True
 
     async def update(self):
-        notification = ui.notification(timeout=10, close_button=True)
-        notification.message = 'Updating custom charts...'
-        notification.spinner = True
+        self.__notification.show()
 
         async def add_chart_triggered(*, complex):
             if not self._constructed:
@@ -72,8 +75,7 @@ class ChartsSpace:
             await self.update_custom_charts()
             await self._auto_update_timer_check()
 
-        notification.spinner = False
-        notification.dismiss()
+        self.__notification.hide()
 
     def check(self):
         if self._charts_space is None or self._charts_worker is None:

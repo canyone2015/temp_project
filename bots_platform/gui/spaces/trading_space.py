@@ -6,6 +6,7 @@ import traceback
 from bots_platform.model.workers import TradingWorker
 from bots_platform.model.utils import get_exchange_trade_url, TimeStamp, get_symbol
 from bots_platform.gui.spaces import Columns, ChartsSpace
+from bots_platform.gui.utils import Notification
 
 
 class TradingSpace:
@@ -26,6 +27,10 @@ class TradingSpace:
         self._elements = dict()
         self._constructed = False
         self.__force_enable_add_update = False
+        notification = ui.notification(timeout=None, close_button=False)
+        notification.message = 'Fetching trading info...'
+        notification.spinner = True
+        self.__notification = Notification(notification)
 
     async def init(self):
         self._elements.clear()
@@ -37,9 +42,7 @@ class TradingSpace:
 
     async def update(self):
         self._delete_update_trading_timer()
-        notification = ui.notification(timeout=10, close_button=True)
-        notification.message = 'Fetching trading info...'
-        notification.spinner = True
+        self.__notification.show()
 
         async def update_trading_triggered(force=False):
             if not self._constructed:
@@ -214,9 +217,7 @@ class TradingSpace:
             self._elements[TradingSpace.UPDATE_TRADING_TIMER] = ui.timer(10,  # 10 seconds
                                                                          callback=lambda *_: update_trading_triggered(),
                                                                          once=True)
-
-        notification.spinner = False
-        notification.dismiss()
+        self.__notification.hide()
 
     def check(self):
         if self._trading_space is None or self._trading_worker is None:
@@ -374,21 +375,21 @@ class TradingSpace:
                                 'type': 'overlay',
                                 'overlay-type': 'line',
                                 'overlay-hint': 'current-price',
-                                'line-label': f"{position['pnl']:+} {currency}",
+                                'line-label': f"PNL ({position['pnl']:+} {currency})",
                                 'values': put_numbers_pair(position['timestamp'], position['mark_price']),
                             })
                             objects.append({
                                 'type': 'overlay',
                                 'overlay-type': 'line',
                                 'overlay-hint': 'liquidation-price',
-                                'line-label': str(position['liquidation_price']),
+                                'line-label': f"Liquidation ({position['liquidation_price']})",
                                 'values': put_numbers_pair(current_timestamp, position['liquidation_price']),
                             })
                             objects.append({
                                 'type': 'overlay',
                                 'overlay-type': 'line',
                                 'overlay-hint': 'trailing-stop',
-                                'line-label': str(position['trailing_stop']),
+                                'line-label': f"Trailing stop ({position['trailing_stop']})",
                                 'values': put_numbers_pair(current_timestamp, position['trailing_stop']),
                             })
                         if 'open_orders' in side_d:
@@ -417,19 +418,21 @@ class TradingSpace:
                                         'values': put_numbers_pair(current_timestamp, open_order['price']),
                                     })
                                 elif 'TakeProfit' in open_order['order']:
+                                    tp_sl = open_order['tp_sl'].replace(' (', ' | ').replace(')', '')
                                     objects.append({
                                         'type': 'overlay',
                                         'overlay-type': 'line',
                                         'overlay-hint': 'take-profit',
-                                        'line-label': str(open_order['tp_sl']),
+                                        'line-label': f"Take-Profit ({tp_sl})",
                                         'values': put_numbers_pair(current_timestamp, open_order['price']),
                                     })
                                 elif 'Stop' in open_order['order']:
+                                    tp_sl = open_order['tp_sl'].replace(' (', ' | ').replace(')', '')
                                     objects.append({
                                         'type': 'overlay',
                                         'overlay-type': 'line',
                                         'overlay-hint': 'stop-loss',
-                                        'line-label': str(open_order['tp_sl']),
+                                        'line-label': f"Stop-Loss ({tp_sl})",
                                         'values': put_numbers_pair(current_timestamp, open_order['price']),
                                     })
                                 else:
